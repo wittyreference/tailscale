@@ -6,6 +6,7 @@ import os
 import pwd
 import re
 import socket
+import stat
 from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -81,6 +82,10 @@ def _test_api_base(base):
     return f"http://{host}:{port}{API_PATH}"
 
 
+# The directories posture builds under a test home; drafts after state, which holds it.
+_TEST_DIRS = ("config", "state", "state/drafts", "claude")
+
+
 def _inside(path, directory):
     """Say whether `path` is `directory` or below it, comparing whole path components."""
     return path == directory or directory in path.parents
@@ -99,6 +104,24 @@ def _test_home(home, real_dirs):
         if _inside(resolved, real) or _inside(real, resolved):
             raise _unsafe(f"TAILNET_HOME {home} overlaps the real {real}: a test run must "
                           "never be able to read the real credentials")
+    # Every test path is built under the resolved home without resolving again, and the
+    # files are opened through their directories, which are followed. So a config/ or
+    # state/ that links out (into the real directories, say) would send a test run there:
+    # the real read.json read, test lines in the real audit log, the real files forgotten.
+    # Checked in test posture only; a production ~/.config/tailnet may well be a link.
+    for entry in _TEST_DIRS:
+        try:
+            linked = stat.S_ISLNK(os.lstat(resolved / entry).st_mode)
+        except (FileNotFoundError, NotADirectoryError):
+            # Not there, or under something that is not a directory: nothing to follow, and
+            # whatever is in the way is refused where its files are opened.
+            continue
+        except OSError as exc:
+            raise _unsafe(f"cannot check {resolved / entry}: {exc.strerror}") from None
+        if linked:
+            raise _unsafe(f"{resolved / entry} is a symlink; a test home's own directories "
+                          "must be plain directories, so a test run cannot be led into the "
+                          "real ones")
     return resolved
 
 

@@ -858,6 +858,19 @@ secret in its own right, and removing a real client secret from a test home, as 
 advises, left the cache beside it. A token minted in test posture is not checked: the loopback
 listener issued it.
 
+**A49. (review, 2026-10-26) finding 7:** §7.2 rule 3 and A10 checked only `TAILNET_HOME` itself,
+then built `config/`, `state/`, `state/drafts/` and `claude/` under it without looking at them,
+and their files are opened through those directories, which are followed; a test home whose
+`config/` or `state/` linked into the real directories had a test run open the real `read.json`,
+append `posture: "test"` lines to the real audit log, and `credentials forget` remove the real
+files, while doctor took settled answers from any line whatever its posture. Test posture now
+refuses, as `ENV_UNSAFE_OVERRIDE` before anything is read, a home where any of those four is a
+symlink, and doctor takes settled answers only from `doctor.run` lines of its own posture;
+because rule 3 promises the real credential files are never read in a test run, an answer
+measured against a loopback stand-in says nothing about the real API, and a production
+`~/.config/tailnet` may legitimately be a link, so the check stays in test posture. `status`
+still shows the newest `doctor.run` line of any posture: it reports, and gates nothing.
+
 ---
 
 ## 0. The design on one page

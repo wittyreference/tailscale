@@ -574,12 +574,16 @@ class _Run:
         """The settled answers earlier runs left, or none when the log cannot be read safely.
 
         A log that fails the private-file checks could have been swapped or written by
-        someone else, so nothing in it is trusted to stop a re-measure (amendment A33).
+        someone else, so nothing in it is trusted to stop a re-measure (amendment A33). Only
+        lines of this run's posture count: an answer measured against a loopback stand-in
+        says nothing about the real API, and the reverse.
         """
         try:
-            return settled_answers(audit.records(self.posture, "doctor.run")), None
+            records = audit.records(self.posture, "doctor.run")
         except LocalError as exc:
             return {}, exc
+        return settled_answers([record for record in records
+                                if record.get("posture") == self.posture.kind]), None
 
     def add(self, check_id, status, finding, evidence=None, next_steps=()):
         """Record one check's result at this moment."""

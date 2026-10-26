@@ -18,7 +18,7 @@ from credfiles import (
 )
 from fixturefiles import body, raw_bytes
 
-from tailnet import audit, cli, gate
+from tailnet import audit, cli, gate, secure_files
 from tailnet.output import format_utc
 
 API = "/api/v2"
@@ -287,6 +287,21 @@ def test_an_answer_older_than_30_days_is_measured_again(cli, tailnet, ready):
     assert "(2 days ago)" in found["S3"]["finding"]
     assert "HTTP 403" in found["S5"]["finding"]
     assert "over 30" in found["S5"]["evidence"]["measured_because"]
+
+
+def test_an_answer_recorded_under_another_posture_is_never_reused(cli, tailnet, ready):
+    # A production line in a test home's log (or a test line that reached the real log)
+    # answered against another API: it must never stop this run measuring for 30 days.
+    young = format_utc(datetime.now(timezone.utc) - timedelta(days=2))
+    line = {"v": 1, "ts": young, "event": "doctor.run", "cli_version": "0.1.0",
+            "posture": "production", "host": "h", "user": "u", "pid": 1, "argv": [],
+            "settled": {"Q3": {"answer": "the read client's ID works as a key ID",
+                               "evidence": {}, "status": "PASS", "measured_at": young}}}
+    ready.state_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
+    secure_files.append_locked(ready.state_dir / "audit.jsonl", (json.dumps(line) + "\n").encode())
+    env = envelope(cli("--json", "doctor"))
+    assert ("GET", KEY) in set(tailnet.calls())
+    assert "days ago" not in checks_of(env)["S3"]["finding"]
 
 
 def test_doctor_emits_questions_in_priority_order(cli, tailnet, home):

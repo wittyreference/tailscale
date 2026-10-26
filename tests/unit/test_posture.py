@@ -153,6 +153,32 @@ def test_a_test_home_inside_or_containing_the_real_dirs_is_refused(tmp_path):
     assert sibling.kind == "test"
 
 
+@pytest.mark.parametrize("entry", ["config", "state", "claude", "state/drafts"])
+def test_a_test_home_whose_own_directories_are_symlinks_is_refused(tmp_path, entry):
+    # Only TAILNET_HOME itself is resolved; a config/ or state/ inside it that links to the
+    # real directories would have a test run read the real read.json, append test lines to
+    # the real audit log, and let `credentials forget` remove the real files (§7.2 rule 3).
+    real = tmp_path / "real"
+    targets = {"config": real / ".config" / "tailnet",
+               "state": real / ".local" / "state" / "tailnet",
+               "claude": real / ".claude",
+               "state/drafts": real / ".local" / "state" / "tailnet" / "drafts"}
+    for target in targets.values():
+        target.mkdir(parents=True, exist_ok=True)
+    home = tmp_path / "tn"
+    (home / "state").mkdir(parents=True)
+    link = home / entry
+    if link.is_dir():
+        link.rmdir()
+    link.symlink_to(targets[entry])
+    exc = refusal(override("http://127.0.0.1:9", home), real)
+    assert exc.code == "ENV_UNSAFE_OVERRIDE"
+    assert f"{home}/{entry} is a symlink" in exc.message
+    # Plain directories, or none yet, are what a test home holds.
+    link.unlink()
+    assert Posture.from_env(override("http://127.0.0.1:9", home), real_home=real).kind == "test"
+
+
 def test_real_dirs_come_from_the_password_database_not_home(tmp_path, monkeypatch):
     monkeypatch.setenv("HOME", str(tmp_path))
     posture = Posture.from_env({"HOME": str(tmp_path)})
