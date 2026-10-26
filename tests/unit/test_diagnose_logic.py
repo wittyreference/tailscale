@@ -79,14 +79,38 @@ def test_shields_up_is_reported_before_probes():
 
 
 def test_tsmp_failure_is_a_path_problem_not_policy():
-    found = diagnose.verdict(replace(OPEN_ROAD, path_ok=False, network_allowed=False,
+    found = diagnose.verdict(replace(OPEN_ROAD, path_ok=False, network_allowed=True,
                                      tcp="timeout", ssh_enabled=False))
     assert found.code == "PATH_DOWN"
     assert "not policy" in found.explanation
+    # An unanswered policy test leaves the failed ping as the evidence there is.
+    assert code(OPEN_ROAD, path_ok=False, network_allowed=None, tcp="timeout",
+                ssh_enabled=False) == "PATH_DOWN"
     # In test posture the pings are not run (path_ok None), so the gate is skipped.
     assert code(OPEN_ROAD, path_ok=None, network_allowed=False) == "POLICY_DROP"
     # PATH_DOWN is not a gate: the probes and the policy test still run and are reported.
     assert "PATH_DOWN" not in diagnose.EARLY
+
+
+def test_a_tsmp_failure_beside_a_named_drop_is_the_policy_not_connectivity():
+    # A policy that lets neither device reach the other trims each from the other's netmap
+    # [device-visibility L77-80], and TSMP needs the peer there ("no matching peer"), so a
+    # named drop explains the failed ping too (A52).
+    found = diagnose.verdict(replace(OPEN_ROAD, path_ok=False, network_allowed=False,
+                                     tcp="timeout", ssh_enabled=False))
+    assert found.code == "POLICY_DROP"
+    assert "netmap" in found.explanation
+    # A destination this host's netmap does not list is never a path fault: without a named
+    # drop it stays unexplained, with what is known said.
+    trimmed = replace(OPEN_ROAD, path_ok=False, in_netmap=False, tcp="timeout",
+                      ssh_enabled=False)
+    assert code(trimmed, network_allowed=False) == "POLICY_DROP"
+    for allowed in (True, None):
+        found = diagnose.verdict(replace(trimmed, network_allowed=allowed))
+        assert found.code == "INCONCLUSIVE", allowed
+        assert "netmap does not list" in found.explanation
+    # A listed peer whose ping failed is still connectivity.
+    assert code(trimmed, in_netmap=True, network_allowed=True) == "PATH_DOWN"
 
 
 def test_an_open_port_on_plain_ssh_is_open():
@@ -384,15 +408,38 @@ def status(**changes):
     return json.dumps(doc, indent=2)
 
 
-def test_source_health_needs_a_running_online_backend_with_peers():
+def test_source_health_needs_a_running_online_backend():
     assert diagnose.source_health(raw_text("status", "self-running")) is None
+    assert diagnose.netmap_note(raw_text("status", "self-running")) is None
     # A stopped backend still lists stale peers [mc §5], so each condition is its own.
     for text, words in ((status(BackendState="Stopped"), "BackendState"),
                         (status(Self_Online=False), "Online"),
-                        (status(Peer={}), "no peers"), (status(Peer=None), "no peers"),
                         ("tailscaled is not running", "JSON")):
         reason = diagnose.source_health(text)
         assert reason is not None and words in reason, text
+
+
+def test_a_healthy_host_whose_policy_leaves_it_no_peers_is_still_a_source():
+    # The netmap holds only devices the policy lets this host reach or be reached by
+    # [device-visibility L37-42], so a Running, online host can see no peer at all. That
+    # is a warning naming the policy, never SOURCE_DOWN, and the ladder still asks the
+    # API, whose network test then names the drop (A52).
+    for peers in ({}, None):
+        text = status(Peer=peers)
+        assert diagnose.source_health(text) is None
+        note = diagnose.netmap_note(text)
+        assert note is not None and "no peers" in note and "policy" in note
+
+
+def test_whether_this_host_s_netmap_lists_a_peer_is_found_by_address():
+    spec5 = ("100.64.0.11", "fd7a:115c:a1e0::b")
+    text = raw_text("status", "self-running")
+    assert diagnose.peer_listed(text, spec5) is True
+    assert diagnose.peer_listed(text, ("100.64.0.13",)) is False
+    assert diagnose.peer_listed(status(Peer=None), spec5) is False
+    # A status that cannot be read says nothing either way.
+    assert diagnose.peer_listed("not JSON", spec5) is None
+    assert diagnose.peer_listed(None, spec5) is None
 
 
 def test_a_peer_s_ssh_host_keys_are_found_by_address():

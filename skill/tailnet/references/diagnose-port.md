@@ -47,9 +47,11 @@ Destinations are always addressed by IPv4 100.x, because MagicDNS failed on the 
 (2026-10-25T23:30:30Z; critic F3.6). Every step is a read.
 
 0. **Source health** (self mode, production only). The local `tailscale status --json` must show
-   `BackendState == "Running"`, `Self.Online`, and a non-empty `Peer` map. A stopped backend still
-   reports a stale peer list (mc §5), so anything else makes every destination `SOURCE_DOWN`, and no
-   API call is made.
+   `BackendState == "Running"` and `Self.Online` with Tailscale IPs. A stopped backend still reports
+   a stale peer list (mc §5), so anything else makes every destination `SOURCE_DOWN`, and no API
+   call is made. An empty `Peer` map is not a failure: the netmap holds only devices the policy lets
+   this host reach or be reached by [visibility L37-42], so it raises the warning `NO_PEERS_VISIBLE`
+   and the ladder goes on to the API (DESIGN A52).
 1. **Inventory.** `GET /tailnet/-/devices?fields=all` resolves the source and each `DEVICE`, and
    records `nodeId`, IPv4, `tags`, `user`, `sshEnabled`, `connectedToControl`, `lastSeen`,
    `keyExpiryDisabled`, `expires`, `blocksIncomingConnections` and `clientVersion`. `sshEnabled`
@@ -63,7 +65,9 @@ Destinations are always addressed by IPv4 100.x, because MagicDNS failed on the 
    (`blocksIncomingConnections`).
 4. **Local probes** (self mode; 5 s each). TSMP ping, ICMP ping, and a real TCP connect to
    `<ipv4>:<port>` (section 6 explains the pings). In test posture the pings are recorded
-   `not-run: test posture` and the TCP probe still runs against loopback.
+   `not-run: test posture` and the TCP probe still runs against loopback. Beside the pings,
+   `probes.in_netmap` records whether the local status lists the destination as a peer: TSMP can
+   reach only a listed peer (DESIGN A52).
 5. **Network policy.** For each source identity S, one `POST /tailnet/-/acl/validate` with the array
    `[{"src": S, "proto": "tcp", "accept": ["<dst-ipv4>:<port>"]}]`, run against the **live** policy
    [spec L2508-2512]. A Tailscale IP is a documented `accept` host [policy-file L907]. Allowed if any
@@ -104,23 +108,23 @@ calls made. Human output gives one verdict line per host, then the evidence, eac
 
 | Verdict | Condition | Proves | Does not prove | Next |
 |---|---|---|---|---|
-| `SOURCE_DOWN` | Self mode; step 0 failed | The droplet is not on the tailnet right now | Anything about the destinations | `tailscale status` on the droplet |
+| `SOURCE_DOWN` | Self mode; step 0 failed | The droplet is not on the tailnet right now: not Running, not online, or no Tailscale IPs | Anything about the destinations; an empty peer list alone never gives it (DESIGN A52) | `tailscale status` on the droplet |
 | `NOT_FOUND` / `AMBIGUOUS` / `SAME_DEVICE` | Step 1 | The argument did not name exactly one other device | — | List the candidates; never pick one |
 | `KEY_EXPIRED` | Gate | The destination's key has lapsed: it is off the tailnet (P9) | — | MC re-authenticates at the host; then `tailnet device disable-key-expiry` |
 | `DEST_OFFLINE` | Gate | Not connected to control now | That the host is powered off | Report `lastSeen` as given |
 | `SHIELDS_UP` | Gate | The device refuses all incoming tailnet connections | — | On the host: `tailscale get shields-up` |
-| `PATH_DOWN` | Self mode; TSMP failed | A connectivity fault, not policy [manage L41] | — | `tailscale netcheck`, `tailscale status`; the official skill's `connectivity.md` |
+| `PATH_DOWN` | Self mode; TSMP failed; the destination is in this host's netmap; the network test named no drop (DESIGN A52) | A connectivity fault, not policy [manage L41] | — | `tailscale netcheck`, `tailscale status`; the official skill's `connectivity.md` |
 | `OPEN` | TCP `open`, and Tailscale SSH off or admitted with `accept` | The port is reachable through both policy and host | That `ssh` will log in: a wrong user and a missing key look alike (tailnet-ssh FINDINGS §12) | `ssh -v <user>@<ipv4>` |
 | `ADMITTED_CHECK_MODE` | User source; admitted only by a `check` rule; and the path holds: TCP `open` in self mode, network allowed in `--from` mode (DESIGN A31) | Reachable after a browser check each period | Unattended access | MC's case for the phone (P7) |
 | `TS_SSH_CHECK_FOR_TAGGED` | Tagged source; only a `check` rule matches; and TCP `open` in self mode, or `--from` mode, or the network dropped (DESIGN A50) | It can never work: "An SSH access rule from a tagged device cannot be in check mode" [SSH L218] | — | An `accept` rule `tag:dev` → `tag:fleet` needs MC's answer to MC6 |
 | `TS_SSH_POLICY` | Tailscale SSH on; network allowed; `ssh` denies both ways; TCP `open` in self mode, or `--from` mode (DESIGN A50) | The `ssh` section has no rule from S to this host for that user | — | `policy-workflow.md`, the `ssh` rule shape |
 | `TS_SSH_UNVERIFIED` | Tailscale SSH on; network allowed; no `--ssh-user`; TCP `open` in self mode, or `--from` mode (DESIGN A50) | Nothing about SSH admission yet | — | Rerun with `--ssh-user` |
-| `POLICY_DROP` | `network_allowed == false` | The live policy drops it. That matches a timeout: a dropped SYN gets a TSMP reject and no RST (`wrap.go:1234-1252` [source-code]) | — | `tailnet policy draft` with the recipe grant; MC applies; rerun. A Tailscale SSH host also needs an `ssh` rule |
+| `POLICY_DROP` | `network_allowed == false` | The live policy drops it. That matches a timeout: a dropped SYN gets a TSMP reject and no RST (`wrap.go:1234-1252` [source-code]). A failed TSMP ping beside it is the same policy when it lets neither device reach the other, which trims each from the other's netmap [visibility L77-80] | — | `tailnet policy draft` with the recipe grant; MC applies; rerun. A Tailscale SSH host also needs an `ssh` rule |
 | `ALLOWED` | `--from` mode; network allowed; Tailscale SSH off or admitted with `accept` | The policy permits it | That the host answers: no probe runs from here | — |
 | `REFUSED_BY_HOST` | Self mode; TCP `refused`; network allowed | The SYN passed Tailscale's filter and the host reset it: nothing listening on that address | — | On-host block |
 | `HOST_SIDE_DROP` | Self mode; TCP `timeout`; network allowed; Tailscale SSH off | The policy allows it; the host firewall or sshd's bind is the suspect | — | On-host block. If the policy changed within the last minute, rerun once first (propagation timing [unverified]) |
 | `TS_SSH_TIMEOUT_UNEXPLAINED` | Self mode; TCP `timeout`; network allowed; Tailscale SSH on, whatever its `ssh` section said (DESIGN A50) | Not the `ssh` section: tailscaled completes the handshake on port 22 and asks the `ssh` section only at login [SSH L61, L118], so it cannot cause a timeout. The SYN was dropped before tailscaled took it, or Tailscale SSH is not running there | Which of those; while Tailscale SSH runs, a host firewall is probably not in the path [inference] | On-host block. The `ssh` section's answer is in the explanation as a second blocker: a denial, or check mode for a tagged source (MC6), still needs fixing once the port opens |
-| `INCONCLUSIVE` | Anything else: probe or API errors, or `sshEnabled` unknown on port 22 with the network allowed (DESIGN A31) | — | — | Every fact is reported and both Tailscale SSH hypotheses listed; a peer's `sshHostKeys` is a weak hint only [unverified] |
+| `INCONCLUSIVE` | Anything else: probe or API errors, `sshEnabled` unknown on port 22 with the network allowed (DESIGN A31), or a destination this host's netmap does not list with no drop named (DESIGN A52) | — | — | Every fact is reported and both Tailscale SSH hypotheses listed; a peer's `sshHostKeys` is a weak hint only [unverified] |
 
 ## 5. The on-host block
 
@@ -168,7 +172,8 @@ recorded (mc §2). All are at least 1.78 where recorded.
 | ICMP | `tailscale ping --icmp <ip>` | End-to-end, "including access control policies". Passes whenever *any* port is allowed between the pair | [manage L35; policy-file L109] |
 
 - TSMP succeeds and ICMP fails: policy is likely blocking. TSMP fails: the devices cannot connect
-  at all. Both succeed and the connection still fails: "check the port numbers in your access
+  at all, or the policy lets neither reach the other and has trimmed the peer from the netmap
+  [visibility L77-80], which `probes.in_netmap` tells apart. Both succeed and the connection still fails: "check the port numbers in your access
   control policies and services" [manage L41]. **MC's droplet case is the last one, so ping says
   nothing about port 22.**
 - Flags: `--c` (default 10), `--timeout` (default `5s`); `--tsmp` and `--icmp` default to false
@@ -254,7 +259,7 @@ Each is reported as unknown when it matters, never filled in.
 
 Read or fetched 2026-10-26.
 
-- `DESIGN`: `DESIGN.md` §5.2, §5.3, §15, §24, §26 and Amendments A31, A32, A50 and A51 in this repo.
+- `DESIGN`: `DESIGN.md` §5.2, §5.3, §15, §24, §26 and Amendments A31, A32 and A50-A52 in this repo.
 - `mc`, `critic`, `api`, `policy-access`: `docs/research/mc-tailnet.md`, `critic.md`,
   `api-surface.md`, `policy-access.md` (all 2026-10-26).
 - `fleet.yaml`: `/home/user/tailnet-ssh/fleet/fleet.yaml` at `2cab922` (2026-10-10).

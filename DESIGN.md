@@ -897,6 +897,24 @@ Tailscale SSH takes :22, tailscaled's netstack consumes the SYN after the filter
 netstack.go:1294-1296, :1497-1504 at `de16943c`], so it is never written to tailscale0 and never
 reaches the host firewall.
 
+**A52. (review, 2026-10-26) findings 2 and 3:** §15.2 step 0 required a non-empty `Peer` map, else
+every destination was `SOURCE_DOWN` ("this host is not on the tailnet now") with no API call, and
+step 7 put `PATH_DOWN` ("connectivity, not policy") before `POLICY_DROP`; a Running, online host
+whose policy lets it reach nothing and be reached by nothing has an empty netmap, so it was called
+down and the policy never tested, and a destination trimmed from its netmap fails TSMP ("no
+matching peer"), so a named drop was reported as connectivity. It was changed so that (1) step 0
+needs only a Running backend and an online Self with Tailscale IPs, an empty `Peer` map raising the
+warning `NO_PEERS_VISIBLE` while the ladder goes on to the API; (2) step 4 records `in_netmap`,
+whether the local status lists the destination as a peer (production self mode only); (3)
+`PATH_DOWN` needs the network test not to have named a drop and the destination to be listed, a
+destination the netmap does not list being `POLICY_DROP` when a drop is named and `INCONCLUSIVE`
+otherwise; and (4) `POLICY_DROP` says when the failed ping or the missing peer is the same policy
+at work; because the netmap holds only devices the policy lets this host reach or be reached by
+[device-visibility L37-42, L77-80], TSMP can only reach a listed peer
+(`wgengine/userspace.go:1272-1279` at `de16943c`), and the API is reached over the internet, not
+the tailnet; mc §5's stale peer list justifies the Running and online checks, not refusing an empty
+list.
+
 ---
 
 ## 0. The design on one page

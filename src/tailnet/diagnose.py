@@ -54,7 +54,9 @@ class Facts:
     `mode` is "self" (this host is the source and the local probes run) or "from" (an
     API-only source). `source_found` and `dest_found` are "ok" or the step-1 verdict that
     stops the ladder; `dest_found` may also be "SAME_DEVICE". `tcp` is the TCP probe's
-    result ("open", "refused", "timeout", "error:<errno>"). `ssh_admitted` is "accept" or
+    result ("open", "refused", "timeout", "error:<errno>"). `in_netmap` says whether this
+    host's local status lists the destination as a peer (production self mode only), which
+    tells a peer the policy trimmed away from a path that is down. `ssh_admitted` is "accept" or
     "check" when the ssh section admitted the source in that mode, "denied" when it
     admitted it in neither, and None when that was not tested or got no answer.
     """
@@ -75,6 +77,7 @@ class Facts:
     ssh_host_keys: bool | None = None
     path_ok: bool | None = None
     icmp_ok: bool | None = None
+    in_netmap: bool | None = None
     tcp: str | None = None
     network_allowed: bool | None = None
     ssh_user: str | None = None
@@ -123,6 +126,10 @@ def _inconclusive(facts, layer):
         unknown.append("the network policy test gave no answer")
     if layer and facts.ssh_admitted is None:
         unknown.append("the ssh section's answer is unknown")
+    if facts.mode == "self" and facts.in_netmap is False:
+        unknown.append("this host's netmap does not list it, so nothing from here can reach it; "
+                       "a policy that lets neither device reach the other hides each from the "
+                       "other [device-visibility L77-80], but the network test named no drop")
     words = "the facts do not settle it"
     if unknown:
         words += ": " + "; ".join(unknown)
@@ -201,9 +208,15 @@ def verdict(facts):
     if facts.blocks_incoming:
         return Verdict("SHIELDS_UP", "it refuses every incoming tailnet connection "
                                      "(blocksIncomingConnections) [spec 4594]")
-    if self_mode and facts.path_ok is False:
+    # TSMP needs the destination in this host's netmap, and a policy that lets neither device
+    # reach the other trims each from the other's [device-visibility L77-80]: a failed ping is
+    # connectivity only when the peer is listed and no drop is named (A52).
+    trimmed = self_mode and facts.in_netmap is False
+    if self_mode and facts.path_ok is False and allowed is not False and not trimmed:
         return Verdict("PATH_DOWN", "the TSMP ping failed, and TSMP stops before the policy "
                                     "check: this is connectivity, not policy")
+    if trimmed and allowed is not False:
+        return Verdict("INCONCLUSIVE", _inconclusive(facts, layer))
     if self_mode and tcp == "open" and (layer is False or admitted == "accept"):
         said = (" and the ssh section admits the source in accept mode" if layer else "")
         return Verdict("OPEN", f"port {facts.port} accepted a TCP connection from this host{said}; "
@@ -236,9 +249,18 @@ def verdict(facts):
         # need a rule, and fixing the grant alone would end in a TS_SSH verdict.
         also = ("; on this Tailscale SSH host the ssh section also needs an accept rule"
                 if layer and admitted not in SSH_MODES else "")
+        hidden = ""
+        if trimmed:
+            hidden = ("; this host's netmap does not list it either: a policy that lets neither "
+                      "device reach the other hides each from the other [device-visibility "
+                      "L77-80]")
+        elif self_mode and facts.path_ok is False:
+            hidden = ("; the TSMP ping failed as well, which the policy also causes when it lets "
+                      "neither device reach the other: that trims each from the other's netmap, "
+                      "and TSMP needs the peer there [device-visibility L77-80]")
         return Verdict("POLICY_DROP", "the policy drops it (want Accept, got Drop); a dropped "
                                       "SYN gets a TSMP reject and no RST, so it looks like a "
-                                      f"timeout{also}")
+                                      f"timeout{hidden}{also}")
     if not self_mode and allowed and (layer is False or admitted == "accept"):
         said = (" and the ssh section admits the source in accept mode" if layer else "")
         return Verdict("ALLOWED", f"the policy permits it{said}; no probe is possible from here")
@@ -396,17 +418,41 @@ def check_args(args):
 def source_health(text):
     """Step 0: why this host cannot be a source now, or None when it can.
 
-    The backend must be Running, Self online with Tailscale IPs, and the peer map non-empty:
-    a host that sees no peer has nothing to probe, and a stopped backend's stale peer list
-    is never trusted [mc §5].
+    The backend must be Running and Self online with Tailscale IPs; a stopped backend's
+    stale peer list is never trusted [mc §5]. An empty peer list is not a reason: the netmap
+    holds only the devices the policy lets this host reach or be reached by
+    [device-visibility L37-42], so a healthy host can see none (A52, see netmap_note).
     """
     local = selfnode.parse_status(text)
-    if not local.usable:
-        return local.reason
-    peers = json.loads(text).get("Peer")
-    if not (isinstance(peers, dict) and peers):
-        return "the local status lists no peers: this host sees nothing else on the tailnet"
-    return None
+    return None if local.usable else local.reason
+
+
+def _peers(text):
+    """The local status's Peer map, {} when it lists none, or None when it cannot be read."""
+    try:
+        doc = json.loads(text) if isinstance(text, str) else None
+    except ValueError:
+        return None
+    if not isinstance(doc, dict):
+        return None
+    peers = doc.get("Peer")
+    if peers is None:
+        return {}
+    return peers if isinstance(peers, dict) else None
+
+
+def netmap_note(text):
+    """Step 0's warning for a usable host that lists no peer, or None when it lists some.
+
+    The ladder goes on: the API is reached over the internet, not the tailnet, and its
+    network test is what names the policy as the cause (A52).
+    """
+    peers = _peers(text)
+    if peers is None or peers:
+        return None
+    return ("the local status lists no peers: the policy may let this host reach nothing and "
+            "be reached by nothing, which trims every device from its netmap; the network "
+            "tests below say whether it drops each destination")
 
 
 def _addresses(values):
@@ -420,23 +466,34 @@ def _addresses(values):
     return found
 
 
+def _matching_peers(text, addresses):
+    """The local status's peers holding any of `addresses`, or None when it cannot be read."""
+    peers = _peers(text)
+    if peers is None:
+        return None
+    wanted = _addresses(addresses)
+    return [peer for peer in peers.values()
+            if isinstance(peer, dict) and wanted & _addresses(peer.get("TailscaleIPs"))]
+
+
+def peer_listed(text, addresses):
+    """Whether this host's netmap lists the peer holding `addresses`: True, False, or None.
+
+    TSMP can only reach a listed peer, and the policy decides who is listed
+    [device-visibility L77-80]; None when the status cannot be read.
+    """
+    matched = _matching_peers(text, addresses)
+    return None if matched is None else bool(matched)
+
+
 def peer_has_host_keys(text, addresses):
     """Whether the local status lists SSH host keys for the peer holding `addresses`.
 
     A weak hint about Tailscale SSH only [ipnstate:316; pol unverified 13]: True or False
     for exactly one matching peer, None when there is none or the status cannot be read.
     """
-    try:
-        doc = json.loads(text)
-    except ValueError:
-        return None
-    peers = doc.get("Peer") if isinstance(doc, dict) else None
-    if not isinstance(peers, dict):
-        return None
-    wanted = _addresses(addresses)
-    matched = [peer for peer in peers.values()
-               if isinstance(peer, dict) and wanted & _addresses(peer.get("TailscaleIPs"))]
-    return bool(matched[0].get("sshHostKeys")) if len(matched) == 1 else None
+    matched = _matching_peers(text, addresses)
+    return bool(matched[0].get("sshHostKeys")) if matched and len(matched) == 1 else None
 
 
 def on_host_block(dest, port, source, source_ip, *, ts_ssh=False):
@@ -668,7 +725,7 @@ class _Ladder:
                               "by IPv4 (§15)")
             return facts
         if facts.mode == "self":
-            facts = self._probe(entry, facts, ip)
+            facts = self._probe(entry, facts, dest)
         facts = replace(facts, network_allowed=self._network(entry, ip))
         if ts_ssh_layer(facts) and self.user and self.identities:
             facts = replace(facts, ssh_admitted=self._ssh(entry, ip))
@@ -686,26 +743,31 @@ class _Ladder:
         return {"result": "pong" if ok else f"exit {result.exit}", "exit": result.exit,
                 "output": result.output, "measured_at": at}, ok
 
-    def _probe(self, entry, facts, ip):
+    def _probe(self, entry, facts, dest):
         """Step 4, self mode: the two pings in production only, the TCP probe in both postures."""
+        ip = dest.ipv4
         probes = {}
         if self.posture.runs_tailscale:
             answers = {}
             for kind in localts.PING_KINDS:
                 probes[kind], answers[kind] = self._ping(ip, kind)
             path_ok, icmp_ok = answers["tsmp"], answers["icmp"]
+            # Read beside the ping: a peer the policy trimmed from the netmap fails TSMP too,
+            # and that failure is the policy's, not the path's (A52).
+            in_netmap = peer_listed(self.status_text, dest.addresses)
         else:
             # Test posture never runs tailscale (D23), so the PATH_DOWN gate is skipped.
             for kind in localts.PING_KINDS:
                 probes[kind] = {"result": NOT_RUN, "exit": None, "output": None,
                                 "measured_at": output.now_utc()}
-            path_ok = icmp_ok = None
+            path_ok = icmp_ok = in_netmap = None
         tcp = tcp_probe(ip, self.port)
         probes["tcp"] = {"result": tcp.result, "banner": tcp.banner,
                          "measured_at": output.now_utc()}
-        probes["path_ok"], probes["icmp_ok"] = path_ok, icmp_ok
+        probes["path_ok"], probes["icmp_ok"], probes["in_netmap"] = path_ok, icmp_ok, in_netmap
         entry["probes"] = probes
-        return replace(facts, path_ok=path_ok, icmp_ok=icmp_ok, tcp=tcp.result)
+        return replace(facts, path_ok=path_ok, icmp_ok=icmp_ok, in_netmap=in_netmap,
+                       tcp=tcp.result)
 
     def _network(self, entry, ip):
         """Step 5: one array-mode test per source identity against the live policy."""
@@ -997,6 +1059,9 @@ def run(posture, args):
     raised, steps = [], []
     if args.from_device is None:
         status_text, problem = _local(posture)
+        note = netmap_note(status_text) if problem is None and status_text else None
+        if note is not None:
+            raised.append(output.warn("NO_PEERS_VISIBLE", note, "device-visibility L37-42"))
         if problem is not None:
             # Step 0 failed: every destination is SOURCE_DOWN, and no API call is made.
             source = Source("self", None, reason=problem, up=False)
