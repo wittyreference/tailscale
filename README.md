@@ -74,8 +74,10 @@ Each step says whose hands it needs. Commands for you run over SSH, from Termius
    Copy each secret into your password manager: it is shown once.
 2. **Agent:** runs the installer's dry run, `./install-tailnet.sh --dry-run`, and shows you the
    plan. Nothing changes.
-3. **Agent:** runs the install, `./install-tailnet.sh`. Later reinstalls ask you first, because
-   they replace the guard's code.
+3. **Agent:** runs the install, `./install-tailnet.sh`. Later reinstalls spelled that way ask you
+   first, because they replace the guard's code. The rule matches that command text only:
+   `installer/install.py` run directly, a wrapper script or an edit to the installed code is not
+   caught.
 4. **MC, over SSH:** store the read client. It prompts for the ID and the secret, so neither passes
    through chat. Proves: the secret is on disk, 0600, and mints a token.
 

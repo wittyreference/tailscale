@@ -1019,6 +1019,20 @@ and the `CLAUDE_CONFIG_DIR` that finishes it, so the record is kept (A39 (3)); b
 installer must never loosen what MC set (§20.4 step 2), and A39 (1) still holds: only the path the
 run computes is ever opened, the record's paths are only compared.
 
+**A62. (review, 2026-10-26) findings 23 and 28:** §4 gave the Makefile `install` and `uninstall`
+targets running the wrapper, §20.4 keeps `Bash(*install-tailnet*)` because a reinstall replaces the
+guard code (D29), and the README told MC "Later reinstalls ask you first"; Claude Code matches a
+Bash rule against the command text the agent writes, never what make runs, so `make install` (or
+`make -C <checkout> install`) copied whatever the checkout held over the installed guard, and
+`make uninstall` took out every gate and deny rule, with no prompt in bypass or auto mode. Both
+targets are gone; `install-dry-run` stays, since it changes nothing, and a test holds every make
+target that runs the installer to a dry run or a name an ask rule matches. The README now promises
+the prompt for `./install-tailnet.sh` only and names what this text-level, accident-grade
+tripwire does not catch: `installer/install.py` run directly, a wrapper script, an edit to the
+installed code. Because dropping the targets needs no new rule, while ask rules for the other
+spellings (`Bash(make*install*)`, `Bash(*installer/install.py*)`) would change what MC is
+prompted for, which is MC's decision and is left open.
+
 ---
 
 ## 0. The design on one page

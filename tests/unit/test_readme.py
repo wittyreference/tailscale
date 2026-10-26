@@ -4,9 +4,9 @@
 import re
 from pathlib import Path
 
-from test_skill import code_texts, invocations, resolve
+from test_skill import code_texts, invocations, permits, resolve
 
-from tailnet import cli
+from tailnet import cli, gate
 
 REPO = Path(__file__).resolve().parents[2]
 README = REPO / "README.md"
@@ -106,6 +106,19 @@ def test_every_make_target_and_installer_flag_in_the_readme_exists():
         if "install-tailnet.sh" in code:
             for flag in re.findall(r"(?<![\w-])--[a-z][a-z-]*", code):
                 assert flag in installer, f"`{code}`: the installer takes no {flag}"
+
+
+def test_the_reinstall_prompt_is_promised_only_for_the_command_text_the_rule_matches():
+    # `Bash(*install-tailnet*)` is matched against the command text the agent writes (D29),
+    # so the README promises the prompt for that spelling and names what it does not catch.
+    ask = gate.rules()["ask"]
+    [step] = [unit for unit in prose_units(section("First run")) if "reinstall" in unit]
+    assert "`./install-tailnet.sh`" in step and "command text only" in step
+    assert any(permits(rule, "./install-tailnet.sh") for rule in ask)
+    if not any(permits(rule, "python3 -I installer/install.py") for rule in ask):
+        assert "`installer/install.py`" in step
+    # The Makefile offers no unprompted way to install, so the README names none.
+    assert "make install " not in text() and "make uninstall" not in text()
 
 
 def test_the_three_things_each_carry_their_read_only_command():

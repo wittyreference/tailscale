@@ -1,11 +1,11 @@
-# ABOUTME: Entry points for tailnet: make venv, test and e2e for development; make install, install-dry-run
-# ABOUTME: and uninstall run install-tailnet.sh for the user who runs make (DESIGN.md §20).
+# ABOUTME: Entry points for tailnet: make venv, test and e2e for development; make install-dry-run shows
+# ABOUTME: what install-tailnet.sh would change; install and uninstall run that script by name (§20).
 
 PYTHON ?= python3
 VENV := .venv
 PY := $(VENV)/bin/python
 
-.PHONY: venv test e2e install install-dry-run uninstall
+.PHONY: venv test e2e install-dry-run
 
 # pytest and ruff are development-only; the CLI itself imports nothing outside the
 # stdlib (DESIGN.md §3.1). Pinned so the 3.10 floor and the droplet run the same tools.
@@ -28,15 +28,10 @@ e2e: $(PY)
 	$(PY) -m pytest tests/e2e
 	@$(PY) -I tests/e2e/manual_checks.py
 
-# The installer copies the CLI, the skills and the rules into the invoking user's home; it
-# never creates credentials. The dry run prints every change and makes none (§20.6).
-install:
-	./install-tailnet.sh
-
+# The dry run prints every change the installer would make and makes none (§20.6). There is
+# no install or uninstall target: Claude Code's `Bash(*install-tailnet*)` ask rule matches the
+# command text an agent writes, never what make runs, so `make install` would replace the
+# guard's code, and `make uninstall` take out the gate rules, without asking MC (D29). Run
+# ./install-tailnet.sh and ./install-tailnet.sh --uninstall by name.
 install-dry-run:
 	./install-tailnet.sh --dry-run
-
-# Removes what install.json says was added. Credentials, the token cache, the protected file,
-# the audit log and drafts stay, and removing files revokes nothing (§20.6).
-uninstall:
-	./install-tailnet.sh --uninstall

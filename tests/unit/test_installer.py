@@ -4,6 +4,7 @@
 import io
 import json
 import os
+import re
 import shutil
 import stat
 import subprocess
@@ -15,6 +16,7 @@ from pathlib import Path
 import install
 import pytest
 import upstream
+from test_skill import permits
 
 from tailnet import doctor, gate
 
@@ -514,15 +516,30 @@ def test_the_wrapper_refuses_root_and_runs_the_installer_isolated(box, tmp_path)
         assert done.returncode == 2, bad
 
 
-def test_the_make_targets_run_the_wrapper():
-    # `make -n` prints each recipe without running it: MC's entry points are the wrapper's.
-    done = subprocess.run(["make", "-n", "-C", str(REPO), "install", "install-dry-run",
-                           "uninstall"], capture_output=True, text=True, timeout=60, check=False,
-                          env={"PATH": "/usr/bin:/bin", "LANG": "C.UTF-8"})
-    assert done.returncode == 0, done.stderr
-    recipes = [line for line in done.stdout.splitlines() if not line.startswith("make")]
-    assert recipes == ["./install-tailnet.sh", "./install-tailnet.sh --dry-run",
-                       "./install-tailnet.sh --uninstall"]
+def test_no_make_target_runs_the_installer_past_its_ask_rule():
+    # Claude Code matches a Bash rule against the command text the agent writes, never what
+    # make runs beneath it, so a `make install` would replace the guard's code, and a `make
+    # uninstall` take out every gate and deny rule, with no `Bash(*install-tailnet*)` prompt
+    # (D29). A target may run the installer only as a dry run, which changes nothing, or
+    # under a name an ask rule matches. `make -n` prints each recipe without running it.
+    makefile = (REPO / "Makefile").read_text(encoding="utf-8")
+    targets = re.search(r"^\.PHONY:(.*)$", makefile, flags=re.MULTILINE).group(1).split()
+    ask = gate.rules()["ask"]
+    runs = {}
+    for target in targets:
+        done = subprocess.run(["make", "-n", "-C", str(REPO), target], capture_output=True,
+                              text=True, timeout=60, check=False,
+                              env={"PATH": "/usr/bin:/bin", "LANG": "C.UTF-8"})
+        assert done.returncode == 0, done.stderr
+        recipes = [line for line in done.stdout.splitlines() if not line.startswith("make")]
+        if any("install-tailnet" in line or "install.py" in line for line in recipes):
+            runs[target] = recipes
+    assert runs == {"install-dry-run": ["./install-tailnet.sh --dry-run"]}
+    for target, recipes in runs.items():
+        assert (all(line.endswith(" --dry-run") for line in recipes)
+                or any(permits(rule, f"make {target}") for rule in ask)), target
+    # The command the README gives for an install is one the ask rule does match.
+    assert any(permits(rule, "./install-tailnet.sh") for rule in ask)
     assert os.access(REPO / "install-tailnet.sh", os.X_OK)
 
 
