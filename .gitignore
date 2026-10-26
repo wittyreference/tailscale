@@ -8,4 +8,6 @@ __pycache__/
 *.secret
 credentials
 credentials.*
+# The module that loads them is code, not a credential.
+!src/tailnet/credentials.py
 .env

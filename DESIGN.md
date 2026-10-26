@@ -170,6 +170,26 @@ posture would be hidden global state, doctor must be able to read its settled an
 a mistyped event would be written where no reader looks, a forged `ts` or `posture` would make
 the narrative lie, and a log that cannot be read safely is one the same checks stop being written.
 
+**A13. (build, 2026-10-26)** §8 left five points of the credentials module open or overlapping;
+it was built as follows. (1) §8.1 said a `file:` target must be an absolute path inside the
+config directory; it must be exactly `<config dir>/<role>.secret`, else `CREDENTIAL_UNSAFE`,
+because a `read.json` naming `write.secret` would have every read open the write secret
+(invariant 4). (2) §8.3's rows overlap when `read.json` alone has a granted scope that is not
+read-only (both "read-only" and "single-client" match); it is `single-client`, as
+`test_a_read_client_granted_write_scope_means_single_client` says, because that client's read
+tokens can write, so reads must be minted narrowed and L2 is absent. (3) §9.2's `cacheable` rule
+lives in `credentials` and `tokens` re-exports it, because `mode()` needs it and §6 orders
+credentials before tokens. (4) §8.2 item 9 registers a secret immediately; a value shorter than 8
+characters (the shortest valid secret in either posture) is refused as malformed without being
+registered, because registering it would blank that string out of all later output; a
+`write.secret` gone missing by the time `load_write_secret` runs refuses with
+`WRITE_CREDENTIAL_MISSING` (exit 5), nothing sent. (5) §5.2 gives `credentials forget` exit 0
+only; it removes the files first and logs after, a log that cannot be written is reported rather
+than fatal, the log line adds `removed`, and a file that cannot be removed raises
+`CREDENTIAL_UNSAFE` (exit 3), because the disarm must never wait on the log, and reporting a
+disarm that did not happen would be worse than failing. `.gitignore`'s `credentials.*` backstop
+gains an exception for `src/tailnet/credentials.py`, which it would otherwise hide from git.
+
 ---
 
 ## 0. The design on one page
