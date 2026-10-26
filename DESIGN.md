@@ -737,6 +737,29 @@ does with arguments a skill never places is not in the research; A1 retired that
 so it can no longer check anything; and the injected status lands above the hard rules, while
 counting more than Claude Code renders can only err on the early side.
 
+**A41. (build, 2026-10-26)** §21.4 gave the e2e suite two files, a conftest that fails when an
+override is set, the read credential fails §8.2 or `tailscale` is missing or not Running, and a
+`run_live.py` that raises if `--apply` appears in its arguments; it was built (1) with `run_live.py`
+also refusing `--apply` inside any argument (`--reason "x --apply"`, `--apply=yes`), every
+`credentials` command but `credentials forget token`, and either override present, even empty, and
+doubling as the library the suite calls (`run_live.run`, which returns the exit, the envelope and
+the child's pid); (2) with a third helper, `tests/e2e/ping_live.py`, that runs one `tailscale ping
+--tsmp` through `localts` and prints its exit and output for E9, refusing either override; (3) with
+the checks in `tests/e2e/preflight.py`, which reads `read.json` through `credentials.load_read_meta`
+and opens a `file:` secret through `secure_files.open_private`, closing it unread, finds the
+tailscale binary as `localts.binary` does without running it, and reads `BackendState` from a
+`tailnet status --json` child run only when a binary exists; and (4) with every missing piece named
+in one numbered message, except that an override stops the check at once, and a Running backend
+whose self cannot be identified named as well; because the suite exists to read the real tailnet,
+so a write, a `credentials forget read` that would delete the credential it runs on, or a quiet
+fall into test posture would each break "read-only by construction" or test the wrong thing,
+while dropping the token cache is what makes E4's single mint countable; the e2e pytest process
+loads `tests/conftest.py`, so netguard refuses any `tailscale` run or off-box connect from it and
+every live action has to happen in a child, and no `tailnet` command pings an address outside the
+inventory, which E9's second half needs; the secret's format is the CLI's to judge (E1 reports it),
+so the preflight never holds it; MC on a phone should learn everything missing from one run, but
+nothing else is the suite's to read while the posture is wrong; and E2 needs a known self.
+
 ---
 
 ## 0. The design on one page
