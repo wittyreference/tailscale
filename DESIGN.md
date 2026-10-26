@@ -331,6 +331,29 @@ an empty list as `null` (whether this API does is **[unverified]**), while a mis
 different body; a stalled daemon must not hold the command; and test posture never runs
 tailscale or leaves loopback.
 
+**A24. (build, 2026-10-26)** §17 said `status` always exits 0 and gave its JSON as `data
+{version, posture, mode, credentials[], token_cache, protected, gate {present, missing[]},
+self_local, last_doctor, open_questions, audit}` without the fields inside them, while §7.2 has
+every command exit 3 on a refused override and §13.3's `doctor.run` line holds no questions; it
+was built so that (1) a refused override still exits 0 for `status` alone, with `"posture":
+"unknown"`, `data.posture_error` and the refusal as a warning, and nothing else read, while
+every other command still exits 3; (2) each section that fails, a bug included, reports its own
+`error` and never stops the command; (3) `credentials[]` holds per role `present`, `client_id`,
+`secret` (`file` or `inline`), `secret_file` (found by `lstat` alone), `granted_scope`, `set_at`,
+and for `write` `tags` and `tags_source`, through a new `credentials.load_read_meta` that never
+opens `read.secret`; (4) `token_cache` reports `minutes_left` and `usable` by the reads' own rule,
+`tokens.cache_usable`, which `ReadToken` now calls too, and an unsafe cache is reported and left
+for the next read to remove; (5) `open_questions` is the list of question ids in a `questions`
+field of the newest `doctor.run` line, which doctor (§29 item 25) must write in priority order,
+and is `null` ("questions unknown") without it; (6) `--brief` carries no `next`, which the full
+view has; and (7) the first line reads `tailnet 0.1.0 · <kind> posture (as of …)`, §5.4's verdict
+form; because a non-zero exit would abort the skill's injection [SK L772-774] and the refusal
+must still be visible there; status must answer even when what it reports on is broken; the
+write secret is opened only by `--apply` (D20) and the read secret only to mint; one rule decides
+whether a cache is usable, so status cannot disagree with the reads; the audit log is the only
+store of doctor's answers (D3); six lines leave no room for next steps; and §5.4's rule governs
+every first line.
+
 ---
 
 ## 0. The design on one page

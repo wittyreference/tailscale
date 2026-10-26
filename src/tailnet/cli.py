@@ -6,7 +6,7 @@ import os
 import sys
 import traceback
 
-from tailnet import devices, dns, errors
+from tailnet import devices, dns, errors, status
 from tailnet.output import Envelope, emit
 from tailnet.posture import API_PATH, Posture
 from tailnet.redact import install_excepthook, redact
@@ -194,6 +194,7 @@ def _not_built(posture, args):
 HANDLERS = dict.fromkeys(_BUILT_BY, _not_built)
 HANDLERS["device list"] = devices.run_list
 HANDLERS["dns"] = dns.run
+HANDLERS["status"] = status.run
 
 
 def _wants_json(argv):
@@ -248,7 +249,11 @@ def main(argv=None):
         posture = Posture.from_env(os.environ)
     except errors.TailnetError as exc:
         # Neither posture holds: the override was refused and nothing falls back to production.
-        env = Envelope.from_error(command, "unknown", exc)
+        # Status alone still answers 0, saying so, because the skill injects it (§17).
+        if command == "status":
+            env = status.refused(exc)
+        else:
+            env = Envelope.from_error(command, "unknown", exc)
         emit(env, json_mode)
         return env.exit
     if posture.kind == "test":

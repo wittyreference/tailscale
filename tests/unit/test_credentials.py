@@ -183,6 +183,28 @@ def test_write_metadata_loads_without_opening_the_write_secret(posture, syscalls
         "write", "kWrite0001CNTRL", fixture_secret("write0007"))
 
 
+def test_read_metadata_loads_without_opening_the_read_secret(posture, syscalls):
+    # status shows the read client without ever holding its secret (§17).
+    assert credentials.load_read_meta(posture) is None
+    write_role(posture, "read", fixture_secret("read0007"))
+    (posture.config_dir / "read.secret").chmod(0o644)
+    syscalls.events.clear()
+    meta = credentials.load_read_meta(posture)
+    assert (meta.client_id, meta.granted_scope) == ("kRead0001CNTRL", READ_SCOPES)
+    assert meta.secret_path == posture.config_dir / "read.secret"
+    assert meta.set_at == "2026-10-26T20:00:00Z"
+    assert syscalls.named("read.secret") == []
+    # An inline secret has no file; it is registered for redaction all the same.
+    inline = fixture_secret("inline07")
+    write_role(posture, "read", inline, inline=True)
+    meta = credentials.load_read_meta(posture)
+    assert meta.secret_path is None
+    assert redact(f"x {inline} y") == "x [REDACTED] y"
+    # A file: target outside the config directory is refused here too.
+    write_role(posture, "read", client_secret="file:/etc/passwd")
+    assert refusal(credentials.load_read_meta, posture).code == "CREDENTIAL_UNSAFE"
+
+
 def test_write_metadata_is_none_without_write_json_and_unrecorded_tags_are_none(posture):
     assert credentials.load_write_meta(posture) is None
     write_role(posture, "write", tags=None, tags_source=None)

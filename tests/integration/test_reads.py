@@ -12,6 +12,8 @@ import pytest
 from credfiles import access_token, fixture_secret, token_reply, write_cache, write_role
 from fixturefiles import body
 
+from tailnet import gate
+
 API = "/api/v2"
 TOKEN = API + "/oauth/token"
 DEVICES = API + "/tailnet/-/devices"
@@ -229,6 +231,8 @@ def test_no_secret_or_token_reaches_stdout_stderr_audit_or_any_file_outside_conf
     serve_dns(loopback, (403, {}, {"message": f"forbidden for Bearer {READ_TOKEN}"}))
     assert run("dns").returncode == 0
     assert run("--json", "dns").returncode == 0
+    assert run("status").returncode == 0
+    assert run("--json", "status", "--brief").returncode == 0
     # A server error that quotes the token and the secret back: the message is shown redacted.
     echo = f"internal: saw Bearer {READ_TOKEN} with client_secret={read_secret}"
     loopback.route("GET", DEVICES, (500, {}, {"message": echo}))
@@ -381,7 +385,8 @@ def test_test_posture_never_runs_tailscale(cli, loopback, configured):
     write_protected(configured, PROTECTED)
     serve_devices(loopback)
     serve_dns(loopback)
-    for args in (["device", "list"], ["--json", "device", "list"], ["dns"], ["--json", "dns"]):
+    for args in (["device", "list"], ["--json", "device", "list"], ["dns"], ["--json", "dns"],
+                 ["status"], ["status", "--brief"], ["--json", "status"]):
         result = cli(*args)
         assert result.returncode == 0, result.stderr
         assert "netguard" not in result.stderr
@@ -466,4 +471,36 @@ def test_dns_without_a_read_credential_exits_3_and_sends_nothing(cli, loopback, 
     serve_dns(loopback)
     result = cli("--json", "dns")
     assert (result.returncode, envelope(result)["error"]["code"]) == (3, "CREDENTIAL_MISSING")
+    assert loopback.requests == []
+
+
+def test_status_brief_always_exits_0_and_reports_missing_gate_rules(cli, loopback, home):
+    # Nothing set up at all: status still answers, in at most six lines.
+    result = cli("status", "--brief")
+    assert result.returncode == 0, result.stderr
+    assert len(result.stdout.splitlines()) <= 6
+    assert "gate rules: 0/10 present" in result.stdout
+    # A full install, both clients, minus the rule that guards the settings file itself.
+    write_role(home, "read")
+    write_role(home, "write")
+    expected = gate.rules_for(gate.claude_dir(home, {}))
+    lost = next(rule for rule in expected["ask"] if rule.startswith("Edit("))
+    home.claude_settings.parent.mkdir(parents=True)
+    home.claude_settings.write_text(json.dumps({"permissions": {
+        "ask": [r for r in expected["ask"] if r != lost], "deny": expected["deny"]}}))
+    result = cli("status", "--brief")
+    assert result.returncode == 0, result.stderr
+    assert len(result.stdout.splitlines()) <= 6
+    assert f"gate rules: 9/10 present (MISSING: {lost})" in result.stdout
+    assert "credentials: two-client" in result.stdout
+    # Every source broken at once: still 0, still at most six lines.
+    for name in ("read.json", "write.json"):
+        (home.config_dir / name).chmod(0o644)
+    write_protected(home, "not a protected list\n")
+    home.claude_settings.write_text("{broken")
+    result = cli("status", "--brief")
+    assert result.returncode == 0, result.stderr
+    assert len(result.stdout.splitlines()) <= 6
+    assert "gate rules: 0/10 present" in result.stdout
+    # Local only: the seam never saw a request.
     assert loopback.requests == []

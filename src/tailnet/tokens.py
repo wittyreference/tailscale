@@ -13,7 +13,8 @@ from tailnet.errors import ApiError, LocalError, TailnetError
 from tailnet.output import format_utc, warn
 from tailnet.redact import REDACTOR
 
-__all__ = ["READ_SCOPES", "ReadToken", "Token", "cacheable", "mint"]
+__all__ = ["READ_SCOPES", "ReadToken", "Token", "cache_expiry", "cache_usable", "cacheable",
+           "mint"]
 
 TOKEN_PATH = "/oauth/token"
 FORM = "application/x-www-form-urlencoded"
@@ -188,6 +189,26 @@ def _parse_time(text):
         return None
 
 
+def cache_expiry(doc):
+    """When a parsed cache document says its token expires, or None when it does not say."""
+    return _parse_time(doc.get("expires_at"))
+
+
+def cache_usable(doc, client_id, now):
+    """Whether a parsed cache document may serve this read client's requests at `now` (§9.3).
+
+    It must be version 1, for this client, hold a scope that is still read-only, and not be
+    within RENEW_MARGIN of expiry. Pure, so status reports the cache by the same rule the
+    reads use.
+    """
+    expires_at = cache_expiry(doc)
+    return (type(doc.get("v")) is int and doc["v"] == 1
+            and doc.get("client_id") == client_id
+            and cacheable(doc.get("scope"))
+            and expires_at is not None
+            and now < expires_at - RENEW_MARGIN)
+
+
 def _discard(path):
     """Remove a cache file if it is there; True when nothing is left behind."""
     try:
@@ -269,14 +290,9 @@ class ReadToken:
             return None
         if not isinstance(doc, dict) or not _register(doc.get("access_token")):
             return None
-        expires_at = _parse_time(doc.get("expires_at"))
-        usable = (type(doc.get("v")) is int and doc["v"] == 1
-                  and doc.get("client_id") == self._cred.client_id
-                  and cacheable(doc.get("scope"))
-                  and expires_at is not None
-                  and datetime.now(timezone.utc) < expires_at - RENEW_MARGIN)
-        if not usable:
+        if not cache_usable(doc, self._cred.client_id, datetime.now(timezone.utc)):
             return None
+        expires_at = cache_expiry(doc)
         minted_at = _parse_time(doc.get("minted_at")) or expires_at - TOKEN_LIFE
         return Token(role="read", client_id=doc["client_id"], access_token=doc["access_token"],
                      scope=doc["scope"], minted_at=minted_at, expires_at=expires_at,

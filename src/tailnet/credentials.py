@@ -79,6 +79,20 @@ class Credential:
 
 
 @dataclass(frozen=True)
+class ReadMeta:
+    """What read.json records about the read client: everything but its secret.
+
+    `secret_path` is None when the secret is inline in read.json. Status shows only this,
+    so it never opens read.secret.
+    """
+
+    client_id: str
+    secret_path: Path | None
+    granted_scope: str | None
+    set_at: str | None
+
+
+@dataclass(frozen=True)
 class WriteMeta:
     """What write.json records about the write client: everything but its secret.
 
@@ -247,6 +261,22 @@ def load_read(posture):
     secret = _load_secret(posture, "read", doc, missing=_missing_read)
     return Credential("read", doc["client_id"], secret, doc.get("granted_scope"),
                       doc.get("set_at"))
+
+
+def load_read_meta(posture):
+    """Load read.json without opening read.secret; None when there is no read client.
+
+    An inline secret is in read.json itself, so it is registered for redaction as the file
+    is read, like any secret in memory; a `file:` target is checked but never opened.
+    """
+    path = posture.config_dir / "read.json"
+    try:
+        doc = _load_doc(posture, "read")
+    except FileNotFoundError:
+        return None
+    value = doc["client_secret"]
+    target = _secret_target(posture, "read", value, path) if value.startswith("file:") else None
+    return ReadMeta(doc["client_id"], target, doc.get("granted_scope"), doc.get("set_at"))
 
 
 def load_write_meta(posture):
