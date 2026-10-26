@@ -5,6 +5,7 @@ import fcntl
 import os
 import secrets
 import stat
+from contextlib import contextmanager
 from pathlib import Path
 
 from tailnet.errors import LocalError
@@ -95,13 +96,15 @@ def _refuse(verb, path, problems, code):
     return LocalError(code, message, next=steps)
 
 
-def read_private(path, max_bytes, *, code="CREDENTIAL_UNSAFE"):
-    """Read a private file whole, after the §8.2 checks, and return its bytes.
+@contextmanager
+def open_private(path, *, max_bytes=None, code="CREDENTIAL_UNSAFE"):
+    """Open a private file read-only after the §8.2 checks; yield its descriptor and stat.
 
     Every check that matters runs on the opened descriptor, and the file is opened relative
     to its already-checked directory, so nothing can be swapped in between check and read.
     A missing file raises FileNotFoundError: what absence means is the caller's to decide.
-    Any refusal raises LocalError with `code` and never quotes the file.
+    Any refusal raises LocalError with `code` and never quotes the file. `max_bytes`, when
+    given, refuses a larger file in the same message as any other problem.
     """
     path = Path(path)
     euid = os.geteuid()
@@ -119,18 +122,28 @@ def read_private(path, max_bytes, *, code="CREDENTIAL_UNSAFE"):
             raise
         except OSError as exc:
             raise LocalError(code, f"cannot read {path}: {exc.strerror}") from None
-        try:
-            st = os.fstat(fd)
-            problems = check_private_stat(st, euid) + problems
-            if st.st_size > max_bytes:
-                problems.append(f"it is {st.st_size} bytes, over the {max_bytes}-byte limit")
-            if problems:
-                raise _refuse("read", path, problems, code)
-            data = _read_at_most(fd, max_bytes + 1)
-        finally:
-            os.close(fd)
     finally:
         os.close(dir_fd)
+    try:
+        st = os.fstat(fd)
+        problems = check_private_stat(st, euid) + problems
+        if max_bytes is not None and st.st_size > max_bytes:
+            problems.append(f"it is {st.st_size} bytes, over the {max_bytes}-byte limit")
+        if problems:
+            raise _refuse("read", path, problems, code)
+        yield fd, st
+    finally:
+        os.close(fd)
+
+
+def read_private(path, max_bytes, *, code="CREDENTIAL_UNSAFE"):
+    """Read a private file whole, after the §8.2 checks, and return its bytes.
+
+    The limit is §8.2 item 7's: credentials, token caches and the protected list are all
+    small, so a file over its limit is refused rather than read.
+    """
+    with open_private(path, max_bytes=max_bytes, code=code) as (fd, _):
+        data = _read_at_most(fd, max_bytes + 1)
     if len(data) > max_bytes:
         # It grew between fstat and read; the limit holds on what was actually read.
         raise _refuse("read", path, [f"it grew past the {max_bytes}-byte limit"], code)

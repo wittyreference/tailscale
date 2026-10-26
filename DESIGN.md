@@ -157,6 +157,19 @@ write must hold as well as a read, and a log that is a hard link or belongs to s
 send the narrative into another file or let it be swapped, while absence means different things
 to different callers (no credential, an unanswered protected list, a token to mint).
 
+**A12. (build, 2026-10-26)** §6 lists the audit surface as `append(event)`, `last(event_name)` and
+`count_lines()`, and the credentials surface likewise without the posture they act under; §13.1
+said the CLI never opens the log in any other mode than append, while §16.3 reads it back with
+`audit.last`; it was built so that every module function that touches the posture's files takes
+the `Posture` as its first argument (`audit.append(posture, event, *, argv=None)`,
+`credentials.load_read(posture)`, and so on), the log is opened for writing only with `O_APPEND`
+and for read-back only read-only, `append` refuses an event name §13.2 does not list or an event
+that sets a common field, and a log that fails the §8.2 file checks is refused on read-back with
+`AUDIT_UNWRITABLE`; because every path comes from the posture (§7.1) and a module-level current
+posture would be hidden global state, doctor must be able to read its settled answers back (D3),
+a mistyped event would be written where no reader looks, a forged `ts` or `posture` would make
+the narrative lie, and a log that cannot be read safely is one the same checks stop being written.
+
 ---
 
 ## 0. The design on one page
