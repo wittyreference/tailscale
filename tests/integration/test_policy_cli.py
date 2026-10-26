@@ -425,3 +425,69 @@ def test_a_fresh_draft_is_ready_after_validate_with_nothing_for_mc_to_apply(cli,
     env = envelope(result)
     assert (result.returncode, env["data"]["ready"], env["data"]["changed"]) == (0, True, False)
     assert env["data"]["diff"] == "" and env["next"] == []
+
+
+SSH_QUESTION = ("policy", "test", "--src", "tag:dev", "--accept", "tag:fleet:22", "--deny",
+                "tag:fleet:443", "--proto", "tcp")
+
+
+def test_policy_test_posts_one_array_against_live_and_exits_8_on_a_drop(cli, live, configured):
+    live.answer = (200, {"X-Tailscale-Request-Id": "REQ-test"}, {})
+    result = cli("--json", *SSH_QUESTION)
+    assert result.returncode == 0, result.stderr
+    [post] = live.requests("POST", VALIDATE)
+    # An array is "tests against the current policy" [spec 2508-2516]: no policy is sent.
+    assert post.header("content-type") == "application/json"
+    assert post.header("authorization") == f"Bearer {READ_TOKEN}"
+    assert post.json() == [{"src": "tag:dev", "proto": "tcp", "accept": ["tag:fleet:22"],
+                            "deny": ["tag:fleet:443"]}]
+    env = envelope(result)
+    assert (env["outcome"], env["request_ids"]) == ("ok", ["REQ-test"])
+    data = env["data"]
+    assert (data["verdict"], data["src"], data["proto"]) == ("pass", "tag:dev", "tcp")
+    assert data["asserted"] == [{"target": "tag:fleet:22", "want": "Accept"},
+                                {"target": "tag:fleet:443", "want": "Drop"}]
+    assert (data["failures"], data["raw_errors"]) == ([], [])
+    human = cli(*SSH_QUESTION)
+    assert human.returncode == 0
+    assert human.stdout.startswith("OK: PASS: every assertion holds for tag:dev (as of ")
+    assert "ACCEPT tag:fleet:22  as asserted" in human.stdout
+    assert "DROP tag:fleet:443  as asserted" in human.stdout
+    # The live policy drops port 22: one line per address the server names, and any line
+    # it cannot parse kept as it came.
+    live.answer = (200, {"X-Tailscale-Request-Id": "REQ-test"}, {
+        "message": "test(s) failed", "data": [{"user": "tag:dev", "errors": [
+            'address "tag:fleet:22": want: Accept, got: Drop', "tag:fleet: no devices match"]}]})
+    result = cli("--json", *SSH_QUESTION)
+    assert result.returncode == 8
+    env = envelope(result)
+    assert (env["outcome"], env["error"]["code"]) == ("negative", "POLICY_TEST_FAILED")
+    assert env["data"]["failures"] == [{"user": "tag:dev", "target": "tag:fleet:22",
+                                        "want": "Accept", "got": "Drop"}]
+    assert env["data"]["raw_errors"] == ["tag:fleet: no devices match"]
+    human = cli(*SSH_QUESTION)
+    assert human.returncode == 8
+    assert human.stdout.startswith("NEGATIVE: POLICY_TEST_FAILED: ")
+    assert "DROP tag:fleet:22  want Accept, got Drop" in human.stdout
+    assert "raw: tag:fleet: no devices match" in human.stdout
+    # A 400 means the server could not run the tests at all, and says so: it is not a drop.
+    live.answer = (400, {}, {"message": "invalid test: unknown host"})
+    env = envelope(cli("--json", *SSH_QUESTION))
+    assert (env["exit"], env["data"]["reason"]) == (8, "HTTP 400")
+    assert "could not parse the tests (HTTP 400): invalid test: unknown host" in \
+        env["error"]["message"]
+
+
+def test_policy_test_arguments_are_refused_before_any_request(cli, live, loopback, configured):
+    cases = [
+        (("--src", "*", "--accept", "tag:fleet:22"), "TEST_WILDCARD"),
+        (("--src", "tag:dev", "--accept", "tag:fleet:*"), "TEST_WILDCARD"),
+        (("--src", "100.64.0.1", "--accept", "tag:fleet:22"), "TEST_SRC_IS_IP"),
+        (("--src", "tag:dev", "--accept", "tag:fleet:22-23"), "TEST_PORT"),
+        (("--src", "tag:dev"), "USAGE"),
+        (("--accept", "tag:fleet:22"), "USAGE"),
+    ]
+    for args, code in cases:
+        result = cli("--json", "policy", "test", *args)
+        assert (result.returncode, envelope(result)["error"]["code"]) == (2, code), args
+    assert loopback.requests == []

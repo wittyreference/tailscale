@@ -811,3 +811,41 @@ def run_diff(posture, args):
               "why": "no client of MC's holds policy_file: MC applies every policy change"}]
     return Envelope("policy diff", posture.kind, headline=headline, next=steps,
                     lines=numbered + list(_HANDOFF), **fields)
+
+
+# --- `policy test` (§14.6) -------------------------------------------------------------------
+
+
+def run_test(posture, args):
+    """`tailnet policy test`: assertions about the live policy, answered by the server (§14.6).
+
+    One test in array mode runs against the policy as it is now [spec 2508-2516], which is
+    how "can X reach Y:22" is asked of the live policy, tag sources included. A pass names
+    every asserted address; a failure names each address the server reports with want and
+    got, and keeps any line it does not parse.
+    """
+    [test] = build_tests(args.src, args.accept, args.deny, args.proto)
+    response = api.validate_tests(api.session(posture), [test])
+    verdict = parse_verdict(response.status, response.body)
+    asserted = ([{"target": target, "want": "Accept"} for target in test.get("accept", [])]
+                + [{"target": target, "want": "Drop"} for target in test.get("deny", [])])
+    failures = [failure for failure in verdict.failures if "target" in failure]
+    raw = [failure["raw"] for failure in verdict.failures if "raw" in failure]
+    data = {"src": test["src"], "proto": test.get("proto"), "asserted": asserted,
+            "verdict": verdict.verdict, "reason": verdict.reason, "message": verdict.message,
+            "failures": failures, "raw_errors": raw,
+            "warnings": [dict(entry) for entry in verdict.warnings]}
+    fields = {"data": data, "warnings": _warned(verdict),
+              "request_ids": [response.request_id] if response.request_id else []}
+    if verdict.passed:
+        headline = f"OK: PASS: every assertion holds for {test['src']}"
+        if verdict.warnings:
+            headline += f", with {_plural(len(verdict.warnings), 'warning')} on stderr"
+        lines = [f"{item['want'].upper()} {item['target']}  as asserted" for item in asserted]
+        return Envelope("policy test", posture.kind, headline=headline, lines=lines, **fields)
+    lines = ([f"{f['got'].upper()} {f['target']}  want {f['want']}, got {f['got']}"
+              for f in failures] + [f"raw: {line}" for line in raw]
+             + ["asserted: " + "; ".join(f"{item['want'].lower()} {item['target']}"
+                                         for item in asserted)])
+    error = Negative("POLICY_TEST_FAILED", _why_it_failed(verdict, "the tests"))
+    return Envelope.from_error("policy test", posture.kind, error, lines=lines, **fields)

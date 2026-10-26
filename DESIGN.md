@@ -466,6 +466,17 @@ a draft could send another file in its place; MC finds an edit in the console's 
 line; the first reason decides what the agent does next; and e2e E8 expects a fresh draft to be
 READY after validate.
 
+**A30. (build, 2026-10-26)** §14.6 gave `policy test`'s output as one line per address with
+want/got plus `raw_errors`, exiting 8 on anything but a pass, while a pass is an empty body that
+names no address; it was built with `data.asserted` (each `--accept` wanting `Accept`, each
+`--deny` wanting `Drop`), the pass view listing those, the failure view listing the addresses
+the server names as it names them, and a 400 still exit 8 but with `data.reason` `HTTP 400` and
+a message saying the server could not parse the tests; because a pass has no other source for
+its lines; the server may report a tag destination by its devices' addresses **[unverified]**
+(pol unverified 5), so matching its lines back to the asserted spelling would be a guess; and
+A16 routes validate's 400 to the verdict parser, so the agent must still be able to tell "the
+live policy drops it" from "the question was malformed".
+
 ---
 
 ## 0. The design on one page
