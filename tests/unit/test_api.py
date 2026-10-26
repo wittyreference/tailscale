@@ -171,6 +171,9 @@ def test_disable_key_expiry_posts_true_once_with_the_write_token(loopback, sessi
     [seen] = sent(loopback)
     assert seen.json() == {"keyExpiryDisabled": True}
     assert seen.header("authorization") == WRITE_BEARER
+    # The spec takes this body as application/json only [spec 596-609]; without the header
+    # urllib labels it a form, which the stand-ins would parse anyway.
+    assert seen.header("content-type") == "application/json"
 
 
 def test_writes_refuse_any_token_but_the_write_token(loopback, posture, session, transport):

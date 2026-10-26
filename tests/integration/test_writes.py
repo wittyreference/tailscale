@@ -87,6 +87,10 @@ class Tailnet:
     def _write(self, node_id, kind):
         """Apply a write to the table (unless told it does not land), then answer it."""
         def handler(request):
+            if request.header("content-type") != "application/json":
+                # The spec documents both write bodies as JSON only [spec 559-573, 596-609];
+                # answering as a strict server would keeps a mislabelled body from landing.
+                return 415, {}, {"message": "the test takes application/json only"}
             status, lands, headers, cut = self._outcomes.get(node_id, (200, True, {}, None))
             if lands:
                 field = "keyExpiryDisabled" if kind == "key" else "tags"
