@@ -119,6 +119,14 @@ value with a quote, backslash or non-ASCII character no longer appears as itself
 at an escaped quote and leaves the rest of the secret showing, and a crash on another thread is
 printed by its own hook, unredacted, which invariant 2 forbids.
 
+**A8. (build, 2026-10-26)** §5.4 listed `error.kind` as
+`refused|usage|local|api|internal|unconfirmed|rejected`, with no kind for exit 8, although §5.5
+gives exit 8 stable codes of its own, and §5.5 lists no code for exit 1; it was built with
+`kind: "negative"` for exit 8, so `DOCTOR_FAIL` and its siblings reach the envelope's `error`
+object (`ok` stays false and `outcome` stays `negative`), and with `INTERNAL`, the §5.3 name, as
+exit 1's only code; because agents branch on codes, and a negative answer whose code had nowhere
+to go would drop the reason it was negative.
+
 ---
 
 ## 0. The design on one page
