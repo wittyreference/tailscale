@@ -477,6 +477,33 @@ its lines; the server may report a tag destination by its devices' addresses **[
 A16 routes validate's 400 to the verdict parser, so the agent must still be able to tell "the
 live policy drops it" from "the question was malformed".
 
+**A31. (build, 2026-10-26)** §6 gave `tcp_probe(ip, port, timeout) -> str` and `verdict(facts)`
+without the facts' fields; §15.2 step 7's rows test `sshEnabled` without naming the port, read
+"not `sshEnabled`" loosely, report `ADMITTED_CHECK_MODE` in `--from` mode without the network
+answer, and give `TS_SSH_TIMEOUT_UNEXPLAINED` a parenthesis ("so the ssh section admitted the
+source") as a reason rather than a condition; step 1 resolves the source but its row names only
+destination outcomes. It was built (1) with `tcp_probe` returning `TcpProbe(result, banner)` and
+taking an IP address only, and `verdict` reading a `Facts` dataclass whose unmeasured fields stay
+`None`, returning `Verdict(code, explanation)`; (2) with every Tailscale SSH condition meaning "on
+port 22 with `sshEnabled` true", so on any other port `sshEnabled` never enters the verdict; (3)
+with "not `sshEnabled`" meaning `sshEnabled` known false, an absent one leaving `OPEN`, `ALLOWED`
+and `HOST_SIDE_DROP` unmatched (`INCONCLUSIVE`); (4) with `ADMITTED_CHECK_MODE` in `--from` mode
+requiring the network test to pass, while `TS_SSH_CHECK_FOR_TAGGED` keeps its place and says so
+when the network drops it too; (5) with `TS_SSH_TIMEOUT_UNEXPLAINED` requiring the ssh section to
+have admitted the source, else `INCONCLUSIVE`; (6) with a source that is not exactly one device
+stopping every destination at step 1 as `NOT_FOUND` or `AMBIGUOUS`, checked before the
+destination; (7) with the gates and step 1 final (`EARLY`): a destination they decide gets no
+probe and no policy call; and (8) with a source identity being a tag or a user login holding an
+`@` (a GitHub login has no dot), so `identities`, `network_tests` and `ssh_candidate` refuse
+anything else, an address or `autogroup:` included, and the alias compared without case; because
+the probe's banner has nowhere to go in a string, and a name would be looked up where MagicDNS
+failed [critic F3.6]; Tailscale SSH claims port 22 only [tsssh L40]; an unknown is never read as
+no (critic Q12), and the `INCONCLUSIVE` row names exactly that case; an ssh rule cannot open a
+port the network policy drops (step 6: "the network rule is necessary"), so the literal row would
+exit 0 on a blocked port; a condition held only in prose would let an unanswered ssh test read as
+admitted; without its source no destination can be judged; the gates are "final"; and
+`autogroup:` is not a device's identity.
+
 ---
 
 ## 0. The design on one page
