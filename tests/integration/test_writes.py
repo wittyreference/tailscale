@@ -293,10 +293,28 @@ def test_an_already_disabled_device_is_a_noop_that_sends_nothing(cli, net, armed
     assert (dry.returncode, envelope(dry)["outcome"]) == (0, "noop")
     result = disable(cli, "claude-factory", apply=True)
     assert (result.returncode, envelope(result)["outcome"]) == (0, "noop")
-    # Nothing to send, so the write secret is never opened and no write token is minted.
+    # Nothing to send, so no write token is minted; the test below holds that the write
+    # secret stays shut as well.
     assert net.writes() == [] and WRITE_CLIENT not in net.mints()
     applied = writes_logged(armed)[-1]
     assert (applied["outcome"], applied["sent"], applied["noop"]) == ("applied", False, True)
+
+
+def test_write_commands_open_the_write_secret_only_to_send(cli, net, armed):
+    # 0644 makes any load of write.secret a CREDENTIAL_UNSAFE refusal (§8.2), so a run that
+    # exits as planned never opened it (invariant 4, D20); the last apply proves the sensor.
+    (armed.config_dir / "write.secret").chmod(0o644)
+    runs = [(disable(cli, "pi5"), 0), (tag(cli, "pi5", "--add", "tag:lab"), 0),
+            (disable(cli, "albini", apply=True), 5),
+            (tag(cli, "pi5", "--add", "tag:lab", apply=True), 5),
+            (disable(cli, "claude-factory", apply=True), 0)]
+    for result, code in runs:
+        assert result.returncode == code, result.stdout + result.stderr
+        assert "CREDENTIAL_UNSAFE" not in result.stdout + result.stderr
+    assert net.writes() == [] and WRITE_CLIENT not in net.mints()
+    result = disable(cli, "pi5", apply=True)
+    assert (result.returncode, envelope(result)["error"]["code"]) == (3, "CREDENTIAL_UNSAFE")
+    assert net.writes() == [] and WRITE_CLIENT not in net.mints()
 
 
 def test_multi_target_disable_applies_in_order_and_stops_at_the_first_failure(cli, net, armed):
