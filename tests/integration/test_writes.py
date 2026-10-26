@@ -336,6 +336,23 @@ def test_multi_target_disable_applies_in_order_and_stops_at_the_first_failure(cl
     assert net.device("pi5")["keyExpiryDisabled"] is False
 
 
+def test_a_device_named_twice_is_planned_and_sent_once(cli, net, armed):
+    # One device needs one write (A26 (7)): two plans from one pre-read would both be non-noop
+    # and POST twice in one approved command (invariant 5).
+    dry = envelope(disable(cli, "pi5", "pi5"))
+    [plan] = dry["data"]["plans"]
+    assert plan["apply_line"].split().count("nPi5x001CNTRL") == 1
+    result = disable(cli, "pi5", "nPi5x001CNTRL", apply=True)
+    env = envelope(result)
+    assert result.returncode == 0, result.stderr
+    assert len(env["data"]["plans"]) == 1
+    assert [r.path for r in net.writes()] == [f"{API}/device/nPi5x001CNTRL/key"]
+    assert net.mints().count(WRITE_CLIENT) == 1
+    applied = [r for r in writes_logged(armed) if r["mode"] == "apply"]
+    assert [(r["target"]["nodeId"], r["outcome"]) for r in applied] == [
+        ("nPi5x001CNTRL", "applied")]
+
+
 def test_a_refused_target_sends_nothing_for_any_target(cli, net, armed):
     result = disable(cli, "pi5", "albini", apply=True)
     assert (result.returncode, envelope(result)["error"]["code"]) == (5, "MULTI_TARGET_NOT_R1")
