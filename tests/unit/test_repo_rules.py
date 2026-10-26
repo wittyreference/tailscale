@@ -1,6 +1,7 @@
 # ABOUTME: Repository-wide rules from CLAUDE.md, checked as tests so breaking one fails `make test`.
-# ABOUTME: Covers ABOUTME headers and the loopback-only suite; later items add the write tripwires.
+# ABOUTME: Covers ABOUTME headers, the loopback-only suite and the pinned spec; more tripwires follow.
 
+import hashlib
 import socket
 import subprocess
 from pathlib import Path
@@ -9,6 +10,7 @@ import netguard
 import pytest
 
 REPO = Path(__file__).resolve().parents[2]
+SPEC = REPO / "spec"
 
 # DESIGN.md §4: code is *.py, *.sh, githooks/*, the Makefile and anything run through a
 # shebang (the generated launcher is one). Data files and Markdown are exempt.
@@ -72,3 +74,12 @@ def test_default_suite_never_leaves_loopback():
     with socket.create_server(("127.0.0.1", 0)) as listener, \
             socket.create_connection(listener.getsockname(), timeout=2):
         pass
+
+
+def test_pinned_spec_matches_sha256sums():
+    # Every [spec NNNN] citation in DESIGN.md is a line of this exact file, so its bytes
+    # must not move without a deliberate re-pin of both files.
+    pins = [line.split() for line in (SPEC / "SHA256SUMS").read_text().splitlines() if line.strip()]
+    assert [name.lstrip("*") for _, name in pins] == ["tailscale-openapi.yaml"]
+    for digest, name in pins:
+        assert hashlib.sha256((SPEC / name.lstrip("*")).read_bytes()).hexdigest() == digest
