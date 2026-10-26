@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+# ABOUTME: Pre-commit guard that refuses a commit made under no identity or a Twilio work identity.
+# ABOUTME: Fails closed, like the write guard in the CLI: a missing answer blocks, it never passes.
+
+set -euo pipefail
+
+# This repo is MC's personal work, and the work/personal split is deliberate. An author
+# line is baked into the commit and only history rewriting takes it back out, so it is
+# cheaper to catch here than to undo later.
+FORBIDDEN_DOMAIN="twilio.com"
+SUGGESTED="mc8805@outlook.com"
+
+email="$(git config user.email 2>/dev/null || true)"
+
+if [ -z "$email" ]; then
+    echo "tailscale: refusing to commit with no git identity set." >&2
+    echo "           git config user.email '$SUGGESTED'" >&2
+    exit 1
+fi
+
+shopt -s nocasematch
+if [[ "$email" == *"@$FORBIDDEN_DOMAIN" || "$email" == *".$FORBIDDEN_DOMAIN" ]]; then
+    echo "tailscale: refusing to commit as <$email>." >&2
+    echo "           $FORBIDDEN_DOMAIN is a work identity; this repo is personal." >&2
+    echo "           git config user.email '$SUGGESTED'" >&2
+    exit 1
+fi

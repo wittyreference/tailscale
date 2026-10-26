@@ -1,0 +1,11 @@
+.venv
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+# The credential never lives in a checkout. These patterns are a backstop for a misplaced
+# copy, not the place it is meant to be kept.
+*.secret
+credentials
+credentials.*
+.env
