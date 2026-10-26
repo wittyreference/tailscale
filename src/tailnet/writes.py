@@ -1,10 +1,11 @@
 # ABOUTME: The write flow of DESIGN.md §12.6: the apply lock, fresh pre-reads, the guard's plan, then for
 # ABOUTME: --apply the write mint, one POST per target, a re-read with the read token, one audit line each.
 
+import json
 import re
 import time
 from contextlib import ExitStack
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 
 from tailnet import (
@@ -33,14 +34,14 @@ from tailnet.http import NoResponse, server_says
 from tailnet.output import Envelope, format_utc
 
 # Which write each command plans; the CLI can send no other (§12.3).
-OPS = {"device disable-key-expiry": guard.DISABLE}
+OPS = {"device tag": guard.TAG, "device disable-key-expiry": guard.DISABLE}
 LOCK_NAME = "apply.lock"
 # §12.2 C10: a write token must hold one of these. `devices` is the legacy name for
 # devices:core [OC L132] and `all` holds every scope; anything else cannot write a device.
 WRITE_SCOPES = frozenset({"devices:core", "devices", "all"})
 # §5.1: a write path takes only a nodeId of letters and digits, the shape the API gives.
 _NODE_ID = re.compile(r"[A-Za-z0-9]+")
-_COMMAND = {guard.DISABLE: "device disable-key-expiry"}
+_COMMAND = {guard.TAG: "device tag", guard.DISABLE: "device disable-key-expiry"}
 _MARK = {"pass": "ok  ", "fail": "FAIL", "skip": "skip"}
 # The skill's rule after exit 6 (§12.6): never re-apply; read what the tailnet shows now.
 _LOOK = {"who": "agent", "run": "tailnet device list --json",
@@ -146,18 +147,26 @@ class _Result:
 
 
 def run(posture, args):
-    """`tailnet device disable-key-expiry`: plan from fresh reads; with --apply, send each once.
+    """`tailnet device tag` and `device disable-key-expiry`: plan from fresh reads; with
+    --apply, send each target's write once.
 
-    The same code runs a dry run and an apply (§12.6). Every attempt leaves its audit lines,
-    refusals before any device was resolved included, with no target.
+    The same code runs a dry run and an apply (§12.6). Tags are checked first, as grammar,
+    so a malformed one is a usage error that reads and records nothing. Every attempt then
+    leaves its audit lines, refusals before any device was resolved included, with no target.
     """
-    attempt = _Attempt(posture=posture, command=args.command, op=OPS[args.command],
+    op = OPS[args.command]
+    if op == guard.TAG:
+        changes = guard.parse_tags(args.add, args.remove)
+        names = [args.device]
+    else:
+        changes, names = None, args.devices
+    attempt = _Attempt(posture=posture, command=args.command, op=op,
                        applying=bool(args.apply), reason=args.reason, confirm=args.confirm)
     try:
         with ExitStack() as held:
             if attempt.applying:
                 _take_lock(held, posture)
-            return _run(attempt, args.devices)
+            return _run(attempt, names, changes)
     except TailnetError as exc:
         if not attempt.logged:
             _record_stop(attempt, exc)
@@ -217,13 +226,37 @@ def _targets(names, found):
     return chosen
 
 
-def _run(attempt, names):
+def _read_policy(session, attempt):
+    """Tag writes only: the live policy as JSON, for tagOwners and the rules a tag appears in.
+
+    Returns (policy, None), or (None, why) when it cannot be read. That is the guard's
+    POLICY_UNREADABLE refusal (§12.3), not an API error, because without tagOwners no tag
+    write can be checked at all.
+    """
+    try:
+        reply = api.get_policy(session, api.JSON)
+    except ApiError as exc:
+        attempt.note(exc.request_id)
+        return None, f"{exc.code}: {exc.message}"
+    attempt.note(reply.response.request_id)
+    try:
+        policy = json.loads(reply.data)
+    except ValueError:
+        return None, "the policy served as JSON does not parse as JSON"
+    if not isinstance(policy, dict):
+        return None, "the policy served as JSON is not a JSON object"
+    return policy, None
+
+
+def _run(attempt, names, changes):
     """Steps 3-10 of §12.6, under the lock when applying."""
     posture = attempt.posture
     session = api.session(posture)
     found, listing = devices.fetch(session)
     attempt.note(listing.request_id)
     targets = _targets(names, found)
+    policy, policy_error = (_read_policy(session, attempt) if attempt.op == guard.TAG
+                            else (None, None))
     attempt.listed = protected.load(posture)
     attempt.me = selfnode.resolve_self(posture, found, attempt.listed)
     attempt.write = credentials.load_write_meta(posture)
@@ -231,8 +264,11 @@ def _run(attempt, names):
     ctx = guard.Context(me=attempt.me, protected=attempt.listed,
                         gate_present=attempt.gate_present,
                         settings_path=str(posture.claude_settings), write=attempt.write,
-                        now=attempt.now)
-    plans = guard.plan_disable_key_expiry(targets, ctx)
+                        now=attempt.now, policy=policy, policy_error=policy_error)
+    if attempt.op == guard.TAG:
+        plans = [guard.plan_tag(targets[0], *changes, ctx)]
+    else:
+        plans = guard.plan_disable_key_expiry(targets, ctx)
     attempt.plans = plans
     refusals = guard.check_apply(plans, ctx, attempt.confirm, attempt.reason,
                                  applying=attempt.applying)
@@ -338,13 +374,29 @@ def _apply(attempt, session, plans):
         elif plan.noop:
             result = _skipped(plan, "noop", "already as requested; nothing was sent")
         else:
-            result = send(session, plan, token)
+            result = _explained(send(session, plan, token), attempt.write)
             stopped = result.exit != errors.OK
         results.append(result)
         raised += _record_result(attempt, result, bool(sending))
     # The write token is dropped as soon as the last POST is made; it is never written down.
     token = None
     return _applied(attempt, plans, results, raised)
+
+
+def _explained(result, write):
+    """Add §10.2's explanation to a tag write the API answered 400: the rules it may have broken.
+
+    Whether the API path applies the client-tag rule is unverified (critic Q8), so the
+    message names both rules and the client's recorded tags, and lets MC judge.
+    """
+    if result.plan.op != guard.TAG or result.status != 400:
+        return result
+    tags = ", ".join(write.tags or ()) if write is not None else ""
+    return replace(result, message=(
+        f"{result.message}; a tag write is refused for a tag that is not a key of tagOwners "
+        "[spec 548], and for a set the write client may not assign: the tags must exactly match "
+        "the client's own, or each be owned by one of them in tagOwners [TAGS L324]; this write "
+        f"client's recorded tags are [{tags}]"))
 
 
 def _skipped(plan, outcome, message):
@@ -384,8 +436,15 @@ def _elapsed(started):
     return round((time.monotonic() - started) * 1000)
 
 
+def _tag_set(tags):
+    """A tag list as the write compares it: lowercased and sorted (§12.6 step 8)."""
+    return sorted({tag.lower() for tag in tags})
+
+
 def _state(plan, device):
     """The field the write changes, as a device shows it now."""
+    if plan.op == guard.TAG:
+        return {"tags": _tag_set(device.tags)}
     return {"keyExpiryDisabled": device.key_expiry_disabled}
 
 
@@ -396,6 +455,8 @@ def _intended(plan):
 
 def _prior(plan):
     """The field the write changes, as the pre-read showed it."""
+    if plan.op == guard.TAG:
+        return {"tags": _tag_set(plan.before["tags"])}
     return {"keyExpiryDisabled": plan.before["keyExpiryDisabled"]}
 
 
@@ -420,7 +481,12 @@ def _reread(session, plan):
 
 
 def _post(session, plan, token):
-    """The write itself: one of the two functions in api.py that can change the tailnet."""
+    """The write itself: one of the two functions in api.py that can change the tailnet.
+
+    A tag write sends the whole new set, because the API replaces the list [api §5.7].
+    """
+    if plan.op == guard.TAG:
+        return api.set_device_tags(session, plan.target.node_id, list(plan.after["tags"]), token)
     return api.disable_key_expiry(session, plan.target.node_id, token)
 
 
@@ -517,7 +583,20 @@ def _applied(attempt, plans, results, raised):
     sent = sum(result.sent for result in results)
     return _envelope(attempt, [], warnings=raised, outcome="applied", results=results,
                      headline=f"APPLIED: {sent} of {len(results)} sent, each confirmed by a "
-                              "re-read")
+                              "re-read", steps=_after_tagging(results))
+
+
+def _after_tagging(results):
+    """After an applied tag write, offer to turn off the key expiry that tagging left on.
+
+    Tagging never changes key expiry [TAGS L84], so a retagged box still drops off the
+    tailnet when its old key lapses (P9) until someone disables it.
+    """
+    return [{"who": "agent", "run": f"tailnet device disable-key-expiry {r.plan.target.node_id}",
+             "why": "tagging left its key expiry on: it drops off the tailnet when the key "
+                    "lapses [TAGS L84]"}
+            for r in results if r.plan.op == guard.TAG and r.outcome == "applied"
+            and r.plan.target.key_expiry_disabled is not True]
 
 
 def _envelope(attempt, refusals, *, warnings, outcome=None, error=None, headline="", steps=(),
@@ -551,6 +630,8 @@ def _before_text(plan, now):
     """The plan's `before` line: what the pre-read showed of the field the write changes."""
     target = plan.target
     owner = f"tags ({', '.join(target.tags)})" if target.tags else f"user {target.user or '?'}"
+    if plan.op == guard.TAG:
+        return f"tags: {', '.join(target.tags) or 'none'}    owner: {owner}"
     expiry = target.key_expiry(now)
     if expiry["disabled"]:
         state = "OFF"
@@ -565,7 +646,11 @@ def _before_text(plan, now):
 def _plan_lines(plan, now, result=None):
     """One target's block in the human view, as §12.7 lays a plan out."""
     target = plan.target
-    after = "key expiry OFF" + ("  (already; nothing to send)" if plan.noop else "")
+    if plan.op == guard.TAG:
+        after = f"tags: {', '.join(plan.after['tags']) or 'none'}"
+    else:
+        after = "key expiry OFF"
+    after += "  (already; nothing to send)" if plan.noop else ""
     lines = [(f"{_COMMAND[plan.op]}  {target.hostname or '?'}  {target.node_id}  "
               f"{target.ipv4 or '-'}"),
              f"  class    {plan.cls}  {guard.CLASS_MEANING[(plan.op, plan.cls)]}",

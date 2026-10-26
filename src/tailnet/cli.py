@@ -194,6 +194,7 @@ def _not_built(posture, args):
 # Each command's handler takes the posture and the parsed arguments and returns an Envelope.
 HANDLERS = dict.fromkeys(_BUILT_BY, _not_built)
 HANDLERS["device list"] = devices.run_list
+HANDLERS["device tag"] = writes.run
 HANDLERS["device disable-key-expiry"] = writes.run
 HANDLERS["dns"] = dns.run
 HANDLERS["status"] = status.run

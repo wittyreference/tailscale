@@ -330,7 +330,8 @@ def _answered(ctx):
                      {"who": "agent", "run": f"{PROG} doctor",
                       "why": "doctor proposes the protected file for MC to write over SSH"})
     count = len(ctx.protected.entries)
-    return _pass("C4", "PROTECTED_UNANSWERED", f"protected list answered, {count} entries")
+    entries = "1 entry" if count == 1 else f"{count} entries"
+    return _pass("C4", "PROTECTED_UNANSWERED", f"protected list answered, {entries}")
 
 
 def _gate(ctx):

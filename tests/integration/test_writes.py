@@ -15,6 +15,7 @@ from tailnet import gate
 API = "/api/v2"
 TOKEN = API + "/oauth/token"
 DEVICES = API + "/tailnet/-/devices"
+ACL = API + "/tailnet/-/acl"
 READ_TOKEN = access_token("read0001")
 WRITE_TOKEN = access_token("write001")
 READ_CLIENT, WRITE_CLIENT = "kRead0001CNTRL", "kWrite0001CNTRL"
@@ -43,8 +44,11 @@ class Tailnet:
         self.loopback = loopback
         self.devices = {d["nodeId"]: d for d in body("scenario", "devices")["devices"]}
         self._outcomes = {}
+        self.policy = body("scenario", "policy")
         loopback.route("POST", TOKEN, self._mint)
         loopback.route("GET", DEVICES, self._list)
+        loopback.route("GET", ACL, lambda request: (
+            200, {"X-Tailscale-Request-Id": "REQ-acl", "ETag": '"etag-1"'}, self.policy))
         for node_id in self.devices:
             loopback.route("GET", f"{API}/device/{node_id}", self._get(node_id))
             loopback.route("POST", f"{API}/device/{node_id}/key", self._write(node_id, "key"))
@@ -460,3 +464,130 @@ def test_the_reason_is_recorded_in_the_audit_line(cli, net, armed):
     assert result.returncode == 0, result.stderr
     assert writes_logged(armed)[-1]["reason"] == "pasted [REDACTED] by mistake"
     assert secret not in (armed.state_dir / "audit.jsonl").read_text()
+
+
+def tag(cli, device, *changes, apply=False, confirm=None, reason=REASON):
+    """Run `device tag DEVICE CHANGES…` with --json; --apply brings its --reason."""
+    args = ["--json", "device", "tag", device, *changes]
+    if confirm is not None:
+        args += ["--confirm", confirm]
+    if apply:
+        args += ["--apply", "--reason", reason]
+    return cli(*args)
+
+
+def test_an_unanswered_protected_list_refuses_tag_applies_and_dry_runs_warn(cli, net, armed):
+    (armed.config_dir / "protected").unlink()
+    result = tag(cli, "pi5", "--add", "tag:lab")
+    assert result.returncode == 0, result.stderr
+    env = envelope(result)
+    [unanswered] = [w for w in env["warnings"] if w["code"] == "PROTECTED_UNANSWERED"]
+    assert unanswered["message"].startswith("apply would be refused: ")
+    result = tag(cli, "pi5", "--add", "tag:lab", apply=True, confirm="retag:pi5")
+    env = envelope(result)
+    assert result.returncode == 5
+    # Test posture takes self from the list's self line too, so self is unknown as well and
+    # is the first refusal (C3 before C4); the unanswered list is refused all the same.
+    assert env["error"]["code"] == "SELF_UNKNOWN"
+    assert "PROTECTED_UNANSWERED" in [r["code"] for r in env["data"]["refusals"]]
+    assert net.writes() == [] and WRITE_CLIENT not in net.mints()
+
+
+def test_tag_apply_posts_the_full_new_set_once_and_rereads(cli, net, armed):
+    result = tag(cli, "pi5", "--add", "tag:lab", apply=True, confirm="retag:pi5")
+    assert result.returncode == 0, result.stderr
+    env = envelope(result)
+    assert env["outcome"] == "applied"
+    [posted] = net.writes()
+    # The API replaces the list, so the whole new set is sent [api §5.7].
+    assert (posted.path, posted.json()) == (f"{API}/device/nPi5x001CNTRL/tags",
+                                           {"tags": ["tag:fleet", "tag:lab"]})
+    assert posted.header("authorization") == f"Bearer {WRITE_TOKEN}"
+    # tagOwners came from the live policy, read as JSON with the read token.
+    [policy] = net.requests("GET", "/tailnet/-/acl")
+    assert policy.header("accept") == "application/json"
+    assert policy.header("authorization") == f"Bearer {READ_TOKEN}"
+    assert net.device("pi5")["tags"] == ["tag:fleet", "tag:lab"]
+    [logged] = writes_logged(armed)
+    assert (logged["op"], logged["outcome"], logged["class"]) == ("device.tag", "applied", "R2")
+    assert logged["requested"] == logged["observed_after"] == {"tags": ["tag:fleet", "tag:lab"]}
+    assert logged["confirm"] == {"required": "retag:pi5", "matched": True}
+    # Retagging leaves key expiry on, so the next step offered is to turn it off [TAGS L84].
+    assert {"who": "agent", "run": "tailnet device disable-key-expiry nPi5x001CNTRL"}.items() \
+        <= env["next"][0].items()
+
+
+def test_a_concurrent_console_change_is_kept_by_the_delta(cli, net, armed):
+    dry = envelope(tag(cli, "pi5", "--add", "tag:lab"))
+    assert dry["data"]["plans"][0]["after"] == {"tags": ["tag:fleet", "tag:lab"]}
+    # MC adds tag:ci in the console between the dry run and the apply.
+    net.device("pi5")["tags"] = ["tag:fleet", "tag:ci"]
+    result = tag(cli, "pi5", "--add", "tag:lab", apply=True, confirm="retag:pi5")
+    assert result.returncode == 0, result.stderr
+    [posted] = net.writes()
+    assert posted.json() == {"tags": ["tag:ci", "tag:fleet", "tag:lab"]}
+
+
+def test_a_confirm_from_before_a_rename_is_refused(cli, net, armed):
+    dry = envelope(tag(cli, "pi5", "--add", "tag:lab"))
+    line = dry["data"]["plans"][0]["apply_line"]
+    assert "--confirm retag:pi5 " in line
+    net.device("pi5")["hostname"] = "pi5-lab"
+    result = tag(cli, "nPi5x001CNTRL", "--add", "tag:lab", apply=True, confirm="retag:pi5")
+    env = envelope(result)
+    assert (result.returncode, env["error"]["code"]) == (5, "CONFIRM_MISMATCH")
+    assert "pi5-lab" in env["error"]["message"] and "renamed" in env["error"]["message"]
+    assert net.writes() == [] and WRITE_CLIENT not in net.mints()
+
+
+def test_strip_owner_without_confirm_exits_5_and_sends_nothing(cli, net, armed):
+    dry = envelope(tag(cli, "albini", "--add", "tag:fleet"))
+    [plan] = dry["data"]["plans"]
+    assert (plan["class"], plan["confirm_required"]) == ("R3", "strip-owner:albini")
+    assert any("removes mc@example.com as owner" in line for line in plan["consequences"])
+    for confirm, code in ((None, "CONFIRM_MISSING"), ("retag:albini", "CONFIRM_MISMATCH")):
+        result = tag(cli, "albini", "--add", "tag:fleet", apply=True, confirm=confirm)
+        env = envelope(result)
+        assert (result.returncode, env["error"]["code"]) == (5, code), confirm
+        assert "strip-owner:albini" in env["error"]["message"]
+    assert net.writes() == [] and WRITE_CLIENT not in net.mints()
+    assert net.device("albini")["tags"] == []
+
+
+def test_a_write_to_self_exits_5(cli, net, armed):
+    for apply in (True, False):
+        result = tag(cli, "claude-factory", "--add", "tag:fleet", apply=apply,
+                     confirm="retag:claude-factory")
+        env = envelope(result)
+        # Refused even as a dry run: no plan to retag the host the agent runs on can be applied.
+        assert (result.returncode, env["outcome"], env["error"]["code"]) == (5, "refused",
+                                                                             "SELF_DEVICE")
+    assert net.writes() == []
+
+
+def test_a_tag_change_on_a_protected_device_exits_5(cli, net, armed):
+    for apply in (True, False):
+        result = tag(cli, "spec5", "--add", "tag:lab", "--remove", "tag:fleet", apply=apply,
+                     confirm="retag:spec5")
+        env = envelope(result)
+        assert (result.returncode, env["error"]["code"]) == (5, "PROTECTED_DEVICE")
+        # MC's own reason for protecting it is what the refusal shows.
+        assert "Elmer console" in env["error"]["message"]
+    assert net.writes() == []
+    assert {r["outcome"] for r in writes_logged(armed)} == {"refused"}
+
+
+def test_a_400_on_a_tag_write_exits_7_and_explains_the_client_tag_rule(cli, net, armed):
+    net.outcome("pi5", 400, lands=False)
+    result = tag(cli, "pi5", "--add", "tag:lab", apply=True, confirm="retag:pi5")
+    env = envelope(result)
+    assert (result.returncode, env["outcome"], env["error"]["code"]) == (7, "rejected",
+                                                                         "WRITE_REJECTED")
+    message = env["error"]["message"]
+    assert "the test answers HTTP 400" in message
+    assert "TAGS L324" in message and "tagOwners" in message
+    assert "[tag:fleet]" in message
+    assert len(net.writes()) == 1
+    [logged] = writes_logged(armed)
+    assert (logged["outcome"], logged["failure"], logged["confirmed"]) == ("failed", "rejected",
+                                                                           True)

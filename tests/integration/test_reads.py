@@ -243,10 +243,11 @@ def test_no_secret_or_token_reaches_stdout_stderr_audit_or_any_file_outside_conf
     loopback.route("POST", TOKEN, token_reply(fresh))
     loopback.route("GET", DEVICES, (401, {}, {"message": f"revoked: {fresh}"}))
     assert run("--json", "device", "list").returncode == 3
-    # Grammar errors and commands not built yet, with a reason that quotes a secret.
+    # A grammar error; a write whose pre-read is refused, with a reason that quotes a secret,
+    # which its audit line must not keep; and a command not built yet.
     assert run("--json", "device", "tag", "pi5", "--appl").returncode == 2
     assert run("device", "tag", "pi5", "--add", "tag:fleet", "--apply", "--reason",
-               f"rotate {read_secret}").returncode == 1
+               f"rotate {read_secret}").returncode == 3
     assert run("--json", "doctor").returncode == 1
 
     secrets = [read_secret, write_secret, READ_TOKEN, stale, fresh]

@@ -132,9 +132,10 @@ def test_the_reason_placeholder_is_refused(capsys, reason):
 def test_a_reason_is_one_to_two_hundred_characters(capsys):
     code, env = run_json(capsys, *TAG, "--apply", "--reason", "r" * 201)
     assert (code, env["error"]["code"]) == (2, "USAGE")
-    # Exactly 200 passes the grammar and reaches the command itself.
+    # Exactly 200 passes the grammar and reaches the command itself, which stops at its first
+    # pre-read: the test home has no read credential.
     code, env = run_json(capsys, *TAG, "--apply", "--reason", "r" * 200)
-    assert (code, env["error"]["code"]) == (1, "INTERNAL")
+    assert (code, env["error"]["code"]) == (3, "CREDENTIAL_MISSING")
 
 
 def test_apply_exists_only_on_the_two_write_commands():
@@ -150,14 +151,27 @@ def test_device_tag_takes_exactly_one_device(capsys):
                  ["device", "tag", "pi5"]):
         code, env = run_json(capsys, *argv)
         assert (code, env["error"]["code"]) == (2, "USAGE"), argv
-    # One device and one change is the whole grammar; the command itself is not built yet.
+    # One device and one change is the whole grammar; the dry run then stops at its first
+    # pre-read, since the test home has no read credential.
     code, env = run_json(capsys, "device", "tag", "pi5", "--remove", "tag:lab")
-    assert (code, env["error"]["code"]) == (1, "INTERNAL")
+    assert (code, env["error"]["code"]) == (3, "CREDENTIAL_MISSING")
     # disable-key-expiry takes several (§12.5); the test home has no read credential, so the
     # dry run stops at its first pre-read.
     code, env = run_json(capsys, "device", "disable-key-expiry", "pi5", "spec5", "nomad-b")
     assert (code, env["command"], env["error"]["code"]) == (3, "device disable-key-expiry",
                                                             "CREDENTIAL_MISSING")
+
+
+def test_malformed_or_contradictory_tags_are_usage_errors_before_anything_is_read(capsys,
+                                                                                 test_posture):
+    for changes, expected in ((["--add", "lab"], "TAG_MALFORMED"),
+                              (["--remove", "tag:"], "TAG_MALFORMED"),
+                              (["--add", "tag:lab:22"], "TAG_MALFORMED"),
+                              (["--add", "tag:Lab", "--remove", "tag:lab"], "TAG_ADD_AND_REMOVE")):
+        code, env = run_json(capsys, "device", "tag", "pi5", *changes)
+        assert (code, env["error"]["code"]) == (2, expected), changes
+    # A usage error is not a write attempt: nothing was read, and no audit line was written.
+    assert not (test_posture / "state").exists()
 
 
 def test_no_flag_accepts_a_secret_a_base_url_a_tailnet_or_force():
