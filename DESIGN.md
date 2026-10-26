@@ -504,6 +504,44 @@ exit 0 on a blocked port; a condition held only in prose would let an unanswered
 admitted; without its source no destination can be judged; the gates are "final"; and
 `autogroup:` is not a device's identity.
 
+**A32. (build, 2026-10-26)** §6 gave `diagnose.run(args)`; §5.2 gave `--ssh-user` no rule; §15.2
+said what an unknown self, an unanswered probe or test, and an API error in steps 5-6 lead to only
+through the `INCONCLUSIVE` row; step 8's block named `<dest>`, `claude-factory`, port 22 and
+`<droplet-100.x>` literally and suggested `--from iphone192`; and the output named its fields
+without their contents. It was built (1) as `run(posture, args)`, importing `policy` for the
+verdict parser (same tier, one way, as A22), with `--port` checked 1-65535 and `--ssh-user` held to
+a portable username (letters, digits, `.`, `_`, `-`, at most 64, not starting with `-`), both
+`USAGE` before any request; (2) with a step-0 status that gives no answer `SOURCE_DOWN`, a missing
+binary still exit 3; (3) finding self in self mode as §11.3 does, from step 0's status in
+production and the self line in test posture, so an unknown self, a self line that disagrees with
+the live join included, is `NOT_FOUND` for every destination with its reason, and an unreadable
+protected file a warning, self then decided without its line; (4) reading a network test as a
+pass, a drop only when the server names `want: Accept, got: Drop`, and anything else (a 400, an
+unknown shape, another line, an API error) as no answer, `network_allowed` false only when every
+identity got a named drop; (5) recording each API error of steps 5-6 against its destination,
+judged `INCONCLUSIVE`, while step 1's device read still ends the command (exit 3 or 4); (6)
+reading the live policy once per run, stopping before check mode when an accept test went
+unanswered, reading an sshTest failure with error lines as denied, keeping the candidate's
+warnings as `policy_warnings`, and giving a destination without an IPv4 address no probe or test;
+(7) with `data {port, ssh_user, source {mode, nodeId, hostname, ipv4, identities, self_source, up,
+found, reason}, destinations[] {dest, resolved, gates, probes, network_test[], ssh_test[],
+policy_warnings[], error, verdict, explanation, next[], measured_at}, calls[]}`, the envelope's
+`next` the union of the destinations', and exit 8's message naming each blocked destination; (8)
+filling the block with the destination's hostname, the source's hostname and address (the address
+clause dropped when there is none) and `--port`, emitting it only for `REFUSED_BY_HOST`,
+`HOST_SIDE_DROP` and `TS_SSH_TIMEOUT_UNEXPLAINED`, beside an agent retry and one `--from`
+suggestion by `nodeId` per user-owned device other than the source and destination; (9) saying
+`POLICY_DROP`'s "the ssh section also needs an accept rule" only when the ssh probe did not admit
+the source; and (10) giving `TS_SSH_UNVERIFIED` a rerun line holding `<user>`, which (1) refuses;
+because a pasted placeholder or an option-shaped name must not reach a policy test; a daemon that
+does not answer is a source that is not up; who-am-I fails closed (§0 item 6) and a source named
+by guess would test the wrong identity; a failure that names no drop says nothing about the port;
+one destination's unanswered call must not hide the others' answers; an unanswered accept test
+could have passed, so "check only" would be a guess; agents read evidence from `data`; MC's phone
+named by a fixed hostname breaks on a rename (P4) and names nothing on another tailnet, while the
+user-owned devices are the ones §3.2's question asks about; a clause telling MC to add a rule that
+already admits is wrong; and a rerun line must not run unedited.
+
 ---
 
 ## 0. The design on one page

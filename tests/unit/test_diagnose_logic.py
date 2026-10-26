@@ -1,17 +1,20 @@
 # ABOUTME: Tests for diagnose's pure half: the verdict ladder of DESIGN.md §15 row by row, the source
 # ABOUTME: identities, the in-memory ssh candidate, and the TCP probe over real loopback sockets.
 
+import argparse
 import contextlib
+import json
 import socket
 import sys
 import threading
 from dataclasses import replace
 
 import pytest
-from fixturefiles import body
+from fixturefiles import body, raw_text
 
 from tailnet import devices, diagnose
 from tailnet.diagnose import Facts
+from tailnet.errors import UsageError
 
 # A destination every gate lets through, reached from a tagged source by IPv4 on port 22.
 OPEN_ROAD = Facts(mode="self", port=22, source_tagged=True, online=True, key_expired=False,
@@ -155,10 +158,13 @@ def test_a_validate_drop_is_a_policy_drop():
         assert found.code == "POLICY_DROP"
         # A policy-dropped SYN gets a TSMP reject and no RST, so it looks like a timeout.
         assert "timeout" in found.explanation
-    # On a Tailscale SSH host the ssh section needs a rule as well.
-    ts_ssh = diagnose.verdict(replace(FROM, network_allowed=False, ssh_enabled=True,
-                                      ssh_user="spec5", ssh_admitted="denied"))
-    assert ts_ssh.code == "POLICY_DROP" and "ssh section" in ts_ssh.explanation
+    # On a Tailscale SSH host the ssh section needs a rule as well, unless it already admits.
+    ts_ssh = replace(FROM, network_allowed=False, ssh_enabled=True, ssh_user="spec5")
+    for admitted in ("denied", None):
+        found = diagnose.verdict(replace(ts_ssh, ssh_admitted=admitted))
+        assert found.code == "POLICY_DROP" and "ssh section" in found.explanation
+    found = diagnose.verdict(replace(ts_ssh, ssh_admitted="accept"))
+    assert found.code == "POLICY_DROP" and "ssh section" not in found.explanation
 
 
 def test_from_mode_with_policy_allow_is_allowed():
@@ -337,3 +343,109 @@ def test_tcp_probe_distinguishes_open_refused_timeout():
     # Only an address is probed: a name would be resolved first, and MagicDNS failed there.
     with pytest.raises(ValueError):
         diagnose.tcp_probe("localhost", 22, 1)
+
+
+def status(**changes):
+    """The synthetic running status as text, with top-level or Self fields changed."""
+    doc = body("status", "self-running")
+    for key, value in changes.items():
+        target, key = (doc["Self"], key[5:]) if key.startswith("Self_") else (doc, key)
+        target[key] = value
+    return json.dumps(doc, indent=2)
+
+
+def test_source_health_needs_a_running_online_backend_with_peers():
+    assert diagnose.source_health(raw_text("status", "self-running")) is None
+    # A stopped backend still lists stale peers [mc §5], so each condition is its own.
+    for text, words in ((status(BackendState="Stopped"), "BackendState"),
+                        (status(Self_Online=False), "Online"),
+                        (status(Peer={}), "no peers"), (status(Peer=None), "no peers"),
+                        ("tailscaled is not running", "JSON")):
+        reason = diagnose.source_health(text)
+        assert reason is not None and words in reason, text
+
+
+def test_a_peer_s_ssh_host_keys_are_found_by_address():
+    spec5 = ("100.64.0.11", "fd7a:115c:a1e0::b")
+    text = raw_text("status", "self-running")
+    assert diagnose.peer_has_host_keys(text, spec5) is False
+    doc = json.loads(text)
+    [peer] = doc["Peer"].values()
+    peer["sshHostKeys"] = ["ssh-ed25519 AAAA"]
+    assert diagnose.peer_has_host_keys(json.dumps(doc), spec5) is True
+    # Not a peer this host knows, or a status that cannot be read: no hint at all.
+    assert diagnose.peer_has_host_keys(text, ("100.64.0.13",)) is None
+    assert diagnose.peer_has_host_keys("not JSON", spec5) is None
+
+
+def test_the_on_host_block_names_the_destination_port_and_source():
+    block = diagnose.on_host_block("pi5", 2222, "claude-factory", "100.64.0.10").splitlines()
+    assert block == [
+        "# On pi5, while the agent retries from claude-factory:",
+        ("tailscale metrics print | grep -E 'inbound_dropped_packets_total'   "
+         "# reason=\"acl\" rising → Tailscale policy drop (client ≥ 1.78)"),
+        ("sudo journalctl -u tailscaled --since '-10min' | grep -E 'Drop: TCP\\{[^}]*:2222\\}'   "
+         "# \"no rules matched\""),
+        ("sudo timeout 20 tcpdump -ni tailscale0 -c 5 'tcp port 2222 and src host 100.64.0.10'   "
+         "# SYN seen → passed Tailscale's filter"),
+        ("sudo ufw status verbose ; tailscale get ssh ; tailscale get shields-up ; "
+         "tailscale get netfilter-mode"),
+    ]
+    # Without a source address the capture filters on the port alone.
+    bare = diagnose.on_host_block("pi5", 22, "claude-factory", None).splitlines()
+    assert "'tcp port 22'" in bare[3] and "src host" not in bare[3]
+
+
+def test_a_port_or_ssh_user_outside_the_rules_is_a_usage_error():
+    def args(port=22, ssh_user=None):
+        """The parsed arguments check_args reads."""
+        return argparse.Namespace(port=port, ssh_user=ssh_user)
+
+    assert diagnose.check_args(args()) == (22, None)
+    assert diagnose.check_args(args(65535, "spec5")) == (65535, "spec5")
+    for bad in (args(port=0), args(port=65536), args(port=-22), args(ssh_user=""),
+                args(ssh_user="<user>"), args(ssh_user="a b"), args(ssh_user="*"),
+                args(ssh_user="-oProxyCommand=x"), args(ssh_user="x" * 65)):
+        with pytest.raises(UsageError) as refused:
+            diagnose.check_args(bad)
+        assert refused.value.code == "USAGE"
+
+
+def test_next_steps_name_who_acts_for_each_verdict():
+    found = inventory()
+    every = list(found.values())
+    me = diagnose.Source("self", found["claude-factory"], self_source="line")
+    pi5 = found["pi5"]
+
+    def steps(code, dest=pi5, port=22, user=None, source=me, ids=("tag:dev",)):
+        """next_steps for one verdict against the scenario's inventory."""
+        return diagnose.next_steps(code, dest, port=port, user=user, source=source, ids=ids,
+                                   inventory=every)
+
+    # An open :22 leaves only ssh itself to try, as the user when one was given.
+    assert [s["run"] for s in steps("OPEN", user="mc")] == ["ssh -v mc@100.64.0.13"]
+    assert [s["run"] for s in steps("OPEN")] == ["ssh -v 100.64.0.13"]
+    assert steps("OPEN", port=443) == []
+    # The rerun line holds a placeholder that check_args refuses, so it cannot run unedited.
+    [rerun] = steps("TS_SSH_UNVERIFIED", source=diagnose.Source("from", found["albini"]),
+                    ids=("mc@example.com",))
+    assert rerun["run"] == ("tailnet diagnose nPi5x001CNTRL --port 22 --ssh-user <user> "
+                            "--from nAlbini1CNTRL")
+    [draft] = steps("POLICY_DROP", dest=found["spec5"])
+    assert draft["run"] == "tailnet policy draft --name allow-tcp-22"
+    assert "from tag:dev to spec5 on tcp:22" in draft["why"]
+    mc, disable = steps("KEY_EXPIRED")
+    assert (mc["who"], mc["needs"]) == ("mc", "terminal")
+    assert disable["run"] == "tailnet device disable-key-expiry nPi5x001CNTRL"
+    assert [s["run"] for s in steps("NOT_FOUND", dest=None)] == ["tailnet device list"]
+    # Verdicts with nothing left to do for anyone.
+    for code in ("ALLOWED", "ADMITTED_CHECK_MODE", "DEST_OFFLINE", "INCONCLUSIVE"):
+        assert steps(code) == [], code
+    # Host-side: MC's block first, then the retry, then each user-owned device via --from.
+    block, retry, *others = steps("HOST_SIDE_DROP", port=22, user="mc")
+    assert (block["who"], block["needs"]) == ("mc", "terminal")
+    assert block["do"].startswith("# On pi5, while the agent retries from claude-factory:")
+    assert retry["run"] == "tailnet diagnose nPi5x001CNTRL --port 22"
+    assert [s["run"] for s in others] == [
+        "tailnet diagnose nPi5x001CNTRL --port 22 --from nAlbini1CNTRL --ssh-user mc",
+        "tailnet diagnose nPi5x001CNTRL --port 22 --from nPhone01CNTRL --ssh-user mc"]

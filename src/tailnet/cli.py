@@ -6,7 +6,7 @@ import os
 import sys
 import traceback
 
-from tailnet import devices, dns, errors, guard, policy, status, writes
+from tailnet import devices, diagnose, dns, errors, guard, policy, status, writes
 from tailnet.output import Envelope, emit
 from tailnet.posture import API_PATH, Posture
 from tailnet.redact import install_excepthook, redact
@@ -202,6 +202,7 @@ HANDLERS["policy validate"] = policy.run_validate
 HANDLERS["policy diff"] = policy.run_diff
 HANDLERS["policy test"] = policy.run_test
 HANDLERS["dns"] = dns.run
+HANDLERS["diagnose"] = diagnose.run
 HANDLERS["status"] = status.run
 
 

@@ -1,12 +1,18 @@
 # ABOUTME: `tailnet diagnose`, the reachability ladder of DESIGN.md §15: why a port on a device cannot be
-# ABOUTME: reached. The verdict, the source identities and the ssh candidate are pure; the TCP probe is real.
+# ABOUTME: reached. The verdict, identities and ssh candidate are pure; the probes are real and read-only.
 
 import copy
 import errno
 import ipaddress
+import json
 import re
 import socket
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
+from datetime import datetime, timezone
+
+from tailnet import api, devices, localts, output, policy, protected, selfnode
+from tailnet.errors import ApiError, LocalError, Negative, Refused, UsageError
+from tailnet.output import Envelope, format_utc
 
 # §15.2 step 4: each local probe waits this long. A policy-dropped SYN is never answered,
 # so the TCP probe's timeout is also how long a drop takes to show.
@@ -188,10 +194,13 @@ def verdict(facts):
         return Verdict("TS_SSH_UNVERIFIED", "the network allows it, and on :22 Tailscale SSH "
                                             "decides admission by user: re-run with --ssh-user")
     if allowed is False:
+        # Said only when the ssh section did not already admit the source: then both layers
+        # need a rule, and fixing the grant alone would end in a TS_SSH verdict.
         also = ("; on this Tailscale SSH host the ssh section also needs an accept rule"
-                if layer else "")
-        return Verdict("POLICY_DROP", "the policy drops it (want Accept, got Drop); a dropped SYN "
-                                      f"gets a TSMP reject and no RST, so it looks like a timeout{also}")
+                if layer and admitted not in SSH_MODES else "")
+        return Verdict("POLICY_DROP", "the policy drops it (want Accept, got Drop); a dropped "
+                                      "SYN gets a TSMP reject and no RST, so it looks like a "
+                                      f"timeout{also}")
     if not self_mode and allowed and (layer is False or admitted == "accept"):
         said = (" and the ssh section admits the source in accept mode" if layer else "")
         return Verdict("ALLOWED", f"the policy permits it{said}; no probe is possible from here")
@@ -322,3 +331,642 @@ def tcp_probe(ip, port, timeout=PROBE_TIMEOUT, *, banner_timeout=BANNER_TIMEOUT)
         except OSError:
             banner = b""
     return TcpProbe("open", banner.decode("utf-8", "backslashreplace") or None)
+
+
+# --- The command: `tailnet diagnose DEVICE... [--port N] [--ssh-user USER] [--from DEVICE]` ---
+
+# Step 0 gives `tailscale status` as long as self detection does (§11.3).
+STATUS_TIMEOUT = selfnode.STATUS_TIMEOUT
+NOT_RUN = "not-run: test posture"
+# A host username as the ssh test sends it: the portable POSIX set, never starting with a
+# hyphen. Anything else, a pasted `<user>` placeholder included, is refused before a request.
+_USER = re.compile(r"[A-Za-z0-9._][A-Za-z0-9._-]{0,63}")
+_HELP = {"who": "agent", "run": "tailnet diagnose --help",
+         "why": "shows the forms each argument takes"}
+_LIST = {"who": "agent", "run": "tailnet device list",
+         "why": "lists every device's nodeId, hostname and address; name one exactly"}
+
+
+def check_args(args):
+    """Hold --port and --ssh-user to §5.2 before anything is read or sent; returns (port, user)."""
+    if not 1 <= args.port <= 65535:
+        raise UsageError("USAGE", f"--port {args.port}: a port is one number from 1 to 65535",
+                         next=[dict(_HELP)])
+    user = args.ssh_user
+    if user is not None and not _USER.fullmatch(user):
+        raise UsageError("USAGE", f"--ssh-user {user!r} is not a host username: letters, digits, "
+                                  "dots, underscores and hyphens, at most 64, not starting with "
+                                  "a hyphen", next=[dict(_HELP)])
+    return args.port, user
+
+
+def source_health(text):
+    """Step 0: why this host cannot be a source now, or None when it can.
+
+    The backend must be Running, Self online with Tailscale IPs, and the peer map non-empty:
+    a host that sees no peer has nothing to probe, and a stopped backend's stale peer list
+    is never trusted [mc §5].
+    """
+    local = selfnode.parse_status(text)
+    if not local.usable:
+        return local.reason
+    peers = json.loads(text).get("Peer")
+    if not (isinstance(peers, dict) and peers):
+        return "the local status lists no peers: this host sees nothing else on the tailnet"
+    return None
+
+
+def _addresses(values):
+    """The IP addresses among `values`, as address objects; anything else is skipped."""
+    found = set()
+    for value in values if isinstance(values, (list, tuple)) else ():
+        try:
+            found.add(ipaddress.ip_address(value))
+        except (TypeError, ValueError):
+            continue
+    return found
+
+
+def peer_has_host_keys(text, addresses):
+    """Whether the local status lists SSH host keys for the peer holding `addresses`.
+
+    A weak hint about Tailscale SSH only [ipnstate:316; pol unverified 13]: True or False
+    for exactly one matching peer, None when there is none or the status cannot be read.
+    """
+    try:
+        doc = json.loads(text)
+    except ValueError:
+        return None
+    peers = doc.get("Peer") if isinstance(doc, dict) else None
+    if not isinstance(peers, dict):
+        return None
+    wanted = _addresses(addresses)
+    matched = [peer for peer in peers.values()
+               if isinstance(peer, dict) and wanted & _addresses(peer.get("TailscaleIPs"))]
+    return bool(matched[0].get("sshHostKeys")) if len(matched) == 1 else None
+
+
+def on_host_block(dest, port, source, source_ip):
+    """The paste block MC runs on the destination (§15.2 step 8); the CLI never runs it.
+
+    The source cannot reach the destination, which is the problem, so these checks run from
+    a session that can. Each line names what it tells apart [pol (d) steps 4-7]; tcpdump and
+    ufw are general Linux, not Tailscale's, and how `metrics print` renders the label is
+    unverified, hence the grep.
+    """
+    capture = f"tcp port {port}" + (f" and src host {source_ip}" if source_ip else "")
+    return "\n".join([
+        f"# On {dest}, while the agent retries from {source}:",
+        ("tailscale metrics print | grep -E 'inbound_dropped_packets_total'   "
+         "# reason=\"acl\" rising → Tailscale policy drop (client ≥ 1.78)"),
+        ("sudo journalctl -u tailscaled --since '-10min' | "
+         f"grep -E 'Drop: TCP\\{{[^}}]*:{port}\\}}'   # \"no rules matched\""),
+        (f"sudo timeout 20 tcpdump -ni tailscale0 -c 5 '{capture}'   "
+         "# SYN seen → passed Tailscale's filter"),
+        ("sudo ufw status verbose ; tailscale get ssh ; tailscale get shields-up ; "
+         "tailscale get netfilter-mode"),
+    ])
+
+
+def _agent(run, why):
+    """A next step the agent takes."""
+    return {"who": "agent", "run": run, "why": why}
+
+
+def _any_pass(answers):
+    """Combine per-identity answers: any pass passes; False only when every one said no."""
+    if True in answers:
+        return True
+    if answers and all(answer is False for answer in answers):
+        return False
+    return None
+
+
+def _network_answer(found):
+    """One network test's answer: True passes, False only for a drop the server named.
+
+    A failure that is not `want: Accept, got: Drop` (a 400, an unknown shape, a line in
+    another form) says nothing about the port, so it is no answer rather than a drop.
+    """
+    if found.passed:
+        return True
+    if found.reason == "errors" and any(f.get("want") == "Accept" and f.get("got") == "Drop"
+                                        for f in found.failures):
+        return False
+    return None
+
+
+def _resolved(device):
+    """Step 1's record of a destination: the Device fields the ladder reads, named as the API
+    names them."""
+    return {"nodeId": device.node_id, "hostname": device.hostname, "ipv4": device.ipv4,
+            "tags": list(device.tags), "user": device.user, "sshEnabled": device.ssh_enabled,
+            "connectedToControl": device.connected, "lastSeen": device.last_seen,
+            "keyExpiryDisabled": device.key_expiry_disabled, "expires": device.expires,
+            "blocksIncomingConnections": device.blocks_incoming,
+            "clientVersion": device.client_version}
+
+
+@dataclass(frozen=True)
+class Source:
+    """The source as step 1 found it: its device, or the step-1 verdict and why there is none.
+
+    `up` is step 0's answer (self mode in production only); `self_source` says how self was
+    found, "live" or "line".
+    """
+
+    mode: str
+    device: object = None
+    found: str = "ok"
+    reason: str | None = None
+    self_source: str | None = None
+    up: bool | None = None
+
+    def name(self):
+        """How the on-host block names the source."""
+        return (self.device.hostname or self.device.node_id) if self.device else "this host"
+
+    def to_dict(self, identities):
+        """The envelope's `source`."""
+        device = self.device
+        return {"mode": self.mode, "nodeId": device.node_id if device else None,
+                "hostname": device.hostname if device else None,
+                "ipv4": device.ipv4 if device else None, "identities": list(identities),
+                "self_source": self.self_source, "up": self.up, "found": self.found,
+                "reason": self.reason}
+
+
+def _from_source(arg, inventory):
+    """The --from source: the device the argument names, exactly as any DEVICE resolves."""
+    try:
+        return Source("from", devices.resolve(arg, inventory))
+    except Refused as exc:
+        found = "AMBIGUOUS" if exc.code == "DEVICE_AMBIGUOUS" else "NOT_FOUND"
+        return Source("from", None, found, f"--from {arg}: {exc.message}")
+
+
+def _self_source(posture, inventory, status_text, raised, steps):
+    """This host as the source, found as self detection finds it (§11.3), failing closed.
+
+    In production the live status from step 0 is joined by Tailscale IP and must agree with
+    MC's self line; in test posture the self line is the only source. An unknown self stops
+    every destination at step 1, since no identity can be named for it.
+    """
+    try:
+        listed = protected.load(posture)
+    except LocalError as exc:
+        listed = None
+        raised.append(output.warn(exc.code, f"{exc.message}; diagnose goes on without the self "
+                                            "line"))
+        steps.extend(exc.next)
+    up = True if posture.runs_tailscale else None
+    if posture.runs_tailscale:
+        me = selfnode.decide(selfnode.parse_status(status_text), inventory, listed)
+    else:
+        me = selfnode.from_line(inventory, listed)
+    if me.known:
+        return Source("self", me.device, self_source=me.source, up=up)
+    return Source("self", None, "NOT_FOUND", f"this host's own device is unknown: {me.reason}",
+                   me.source, up)
+
+
+class _Ladder:
+    """One run of the ladder: the session, the API calls it made, and the live policy, read once."""
+
+    def __init__(self, posture, session, port, user, inventory, source, status_text):
+        self.posture = posture
+        self.session = session
+        self.port = port
+        self.user = user
+        self.inventory = inventory
+        self.source = source
+        self.status_text = status_text
+        self.identities = identities(source.device) if source.device else ()
+        self.calls = []
+        self._live = None
+
+    def made(self, name, response):
+        """Record a call that got an answer."""
+        self.calls.append({"api": name, "where": response.where, "status": response.status,
+                           "request_id": response.request_id, "error": None})
+
+    def failed(self, name, exc):
+        """Record a call that ended in an API error."""
+        self.calls.append({"api": name, "where": getattr(exc, "where", None),
+                           "status": exc.http_status, "request_id": exc.request_id,
+                           "error": exc.code})
+
+    def _ask(self, name, send):
+        """Send one validate and read its verdict: (response, verdict, error dict or None).
+
+        An API error here is a fact about this destination, reported and judged
+        INCONCLUSIVE, never the end of the whole command (§15.2 step 7).
+        """
+        try:
+            response = send()
+        except ApiError as exc:
+            self.failed(name, exc)
+            return None, None, {"code": exc.code, "message": exc.message}
+        self.made(name, response)
+        try:
+            return response, policy.parse_verdict(response.status, response.body), None
+        except ApiError as exc:
+            return response, None, {"code": exc.code, "message": exc.message}
+
+    def diagnose(self, arg, now):
+        """Run the ladder for one DEVICE argument and return its record (§15.2 "Output")."""
+        entry = {"dest": arg, "resolved": None, "gates": None, "probes": None,
+                 "network_test": [], "ssh_test": [], "policy_warnings": [], "error": None}
+        source = self.source
+        facts = Facts(mode=source.mode, port=self.port, source_up=source.up,
+                      source_found=source.found, source_reason=source.reason,
+                      source_tagged=bool(source.device.tags) if source.device else None,
+                      ssh_user=self.user)
+        dest = None
+        try:
+            dest = devices.resolve(arg, self.inventory)
+        except Refused as exc:
+            found = "AMBIGUOUS" if exc.code == "DEVICE_AMBIGUOUS" else "NOT_FOUND"
+            facts = replace(facts, dest_found=found, dest_reason=exc.message)
+        else:
+            facts = self._gates(entry, facts, dest, now)
+        if verdict(facts).code not in EARLY:
+            facts = self._climb(entry, facts, dest)
+        found = verdict(facts)
+        entry.update(verdict=found.code, explanation=found.explanation,
+                     next=next_steps(found.code, dest, port=self.port, user=self.user,
+                                     source=self.source, ids=self.identities,
+                                     inventory=self.inventory),
+                     measured_at=output.now_utc())
+        return entry
+
+    def _gates(self, entry, facts, dest, now):
+        """Steps 1 and 3: the destination's record, and the gates that end the ladder early."""
+        same = self.source.device is not None and dest.node_id == self.source.device.node_id
+        expired = dest.key_expiry(now)["expired"] is True
+        hint = (peer_has_host_keys(self.status_text, dest.addresses)
+                if self.status_text is not None else None)
+        entry["resolved"] = _resolved(dest)
+        entry["gates"] = {"same_device": same, "key_expired": expired,
+                          "offline": dest.connected is False,
+                          "shields_up": dest.blocks_incoming is True}
+        return replace(facts, dest_found="SAME_DEVICE" if same else "ok", key_expired=expired,
+                       online=dest.connected, last_seen=dest.last_seen,
+                       blocks_incoming=dest.blocks_incoming, ssh_enabled=dest.ssh_enabled,
+                       ssh_host_keys=hint)
+
+    def _climb(self, entry, facts, dest):
+        """Steps 4-6 for a destination the gates let through: probes, network test, ssh layer."""
+        ip = dest.ipv4
+        if ip is None:
+            entry["error"] = ("it has no Tailscale IPv4 address, and destinations are addressed "
+                              "by IPv4 (§15)")
+            return facts
+        if facts.mode == "self":
+            facts = self._probe(entry, facts, ip)
+        facts = replace(facts, network_allowed=self._network(entry, ip))
+        if ts_ssh_layer(facts) and self.user and self.identities:
+            facts = replace(facts, ssh_admitted=self._ssh(entry, ip))
+        return facts
+
+    def _ping(self, ip, kind):
+        """One `tailscale ping`: its exit code is the answer, its output kept raw (step 4)."""
+        at = output.now_utc()
+        try:
+            result = localts.ping(self.posture, ip, kind, PROBE_TIMEOUT)
+        except localts.Failed as exc:
+            return {"result": "no answer", "exit": None, "output": exc.reason,
+                    "measured_at": at}, None
+        ok = result.exit == 0
+        return {"result": "pong" if ok else f"exit {result.exit}", "exit": result.exit,
+                "output": result.output, "measured_at": at}, ok
+
+    def _probe(self, entry, facts, ip):
+        """Step 4, self mode: the two pings in production only, the TCP probe in both postures."""
+        probes = {}
+        if self.posture.runs_tailscale:
+            answers = {}
+            for kind in localts.PING_KINDS:
+                probes[kind], answers[kind] = self._ping(ip, kind)
+            path_ok, icmp_ok = answers["tsmp"], answers["icmp"]
+        else:
+            # Test posture never runs tailscale (D23), so the PATH_DOWN gate is skipped.
+            for kind in localts.PING_KINDS:
+                probes[kind] = {"result": NOT_RUN, "exit": None, "output": None,
+                                "measured_at": output.now_utc()}
+            path_ok = icmp_ok = None
+        tcp = tcp_probe(ip, self.port)
+        probes["tcp"] = {"result": tcp.result, "banner": tcp.banner,
+                         "measured_at": output.now_utc()}
+        probes["path_ok"], probes["icmp_ok"] = path_ok, icmp_ok
+        entry["probes"] = probes
+        return replace(facts, path_ok=path_ok, icmp_ok=icmp_ok, tcp=tcp.result)
+
+    def _network(self, entry, ip):
+        """Step 5: one array-mode test per source identity against the live policy."""
+        answers = []
+        for src in self.identities:
+            tests = network_tests(src, ip, self.port)
+            response, found, error = self._ask(
+                "validate_tests", lambda tests=tests: api.validate_tests(self.session, tests))
+            record = {"src": src, "accept": tests[0]["accept"][0],
+                      "request_id": response.request_id if response else None, "error": error}
+            if found is None:
+                record.update(verdict=None, allowed=None)
+                answers.append(None)
+            else:
+                allowed = _network_answer(found)
+                record.update(found.to_dict(), allowed=allowed)
+                answers.append(allowed)
+            entry["network_test"].append(record)
+        return _any_pass(answers)
+
+    def _live_policy(self):
+        """The live policy in its JSON form, read once per run: (object, None) or (None, error)."""
+        if self._live is None:
+            self._live = self._read_live()
+        return self._live
+
+    def _read_live(self):
+        """Read the live policy as JSON (step 6.2); its comments are not needed to test it."""
+        try:
+            reply = api.get_policy(self.session, api.JSON)
+        except ApiError as exc:
+            self.failed("get_policy", exc)
+            return None, {"code": exc.code, "message": exc.message}
+        self.made("get_policy", reply.response)
+        try:
+            doc = reply.response.json()
+        except ApiError as exc:
+            return None, {"code": exc.code, "message": exc.message}
+        if not isinstance(doc, dict):
+            return None, {"code": "API_BAD_RESPONSE",
+                          "message": "the live policy in its JSON form is not an object"}
+        return doc, None
+
+    def _ssh(self, entry, ip):
+        """Step 6: accept mode for every identity, then check mode only if none passed.
+
+        Returns "accept", "check", "denied", or None when an answer is missing: an unanswered
+        accept test could have passed, so check mode is not asked about after one.
+        """
+        live, error = self._live_policy()
+        if error is not None:
+            entry["ssh_test"].append({"src": None, "mode": None, "user": self.user, "alias": None,
+                                      "verdict": None, "request_id": None, "error": error})
+            return None
+        for mode in SSH_MODES:
+            outcomes = [self._ssh_one(entry, live, ip, src, mode) for src in self.identities]
+            if True in outcomes:
+                return mode
+            if None in outcomes:
+                return None
+        return "denied"
+
+    def _ssh_one(self, entry, live, ip, src, mode):
+        """Validate one in-memory candidate; True admits, False denies, None is no answer."""
+        record = {"src": src, "mode": mode, "user": self.user, "alias": None, "verdict": None,
+                  "request_id": None, "error": None}
+        entry["ssh_test"].append(record)
+        try:
+            candidate = ssh_candidate(live, ip, src, self.user, mode)
+        except (TypeError, ValueError) as exc:
+            record["error"] = {"code": "API_BAD_RESPONSE", "message": str(exc)}
+            return None
+        record["alias"] = candidate["sshTests"][0]["dst"][0]
+        body = json.dumps(candidate).encode("utf-8")
+        response, found, error = self._ask(
+            "validate_policy", lambda: api.validate_policy(self.session, body, api.JSON))
+        record.update(request_id=response.request_id if response else None, error=error)
+        if found is None:
+            return None
+        record.update(verdict=found.verdict, reason=found.reason, message=found.message,
+                      errors=[item["line"] for item in found.errors])
+        # Warnings come from the live policy itself, not from the probe, so they are
+        # reported apart from its answer (§15.2 step 6.6).
+        for item in found.warnings:
+            said = f"{item['user']}: {item['line']}" if item["user"] else item["line"]
+            if said not in entry["policy_warnings"]:
+                entry["policy_warnings"].append(said)
+        if found.passed:
+            return True
+        return False if found.reason == "errors" else None
+
+
+def next_steps(code, dest, *, port, user, source, ids, inventory):
+    """What happens next for one verdict, naming who acts (§15.2 step 7's last column).
+
+    Pure: `dest` is the destination Device (None when it did not resolve), `source` the
+    Source, `ids` its identities and `inventory` every device, from which the on-host steps
+    pick MC's user-owned devices to ask about with --from.
+    """
+    if code == "SOURCE_DOWN":
+        return [_agent("tailscale status", "this host is not on the tailnet now; its local "
+                                           "status says why")]
+    if code in ("NOT_FOUND", "AMBIGUOUS"):
+        return [dict(_LIST)]
+    if code == "SAME_DEVICE":
+        return [_agent("tailnet device list", "the destination is the source: name another "
+                                              "source with --from, or another destination")]
+    name = dest.hostname or dest.node_id
+    if code == "KEY_EXPIRED":
+        return [{"who": "mc", "needs": "terminal",
+                 "do": f"re-authenticate {name} at the host, so it rejoins the tailnet",
+                 "why": "its key expired with key expiry on, so it is off the tailnet (P9)"},
+                _agent(f"tailnet device disable-key-expiry {dest.node_id}",
+                       "once it is back: plans turning key expiry off so it cannot lapse "
+                       "again; MC approves the apply")]
+    if code == "SHIELDS_UP":
+        return [{"who": "mc", "needs": "terminal", "do": f"on {name}: tailscale get shields-up",
+                 "why": "the API says it refuses every incoming tailnet connection"}]
+    if code == "PATH_DOWN":
+        return [_agent("tailscale netcheck", "connectivity, not policy: what this host's "
+                                             "network allows (the official skill's "
+                                             "connectivity.md)"),
+                _agent("tailscale status", "whether this host sees the peer, and how")]
+    if code == "OPEN" and port == SSH_PORT:
+        target = f"{user}@{dest.ipv4}" if user else dest.ipv4
+        return [_agent(f"ssh -v {target}", "the port is reachable; a failing ssh is the user "
+                                           "or the key, which look alike")]
+    sources = " or ".join(ids)
+    if code == "TS_SSH_CHECK_FOR_TAGGED":
+        keep = "Keep check mode only"
+        return [{"who": "ask_mc", "question": {
+            "id": "MC6",
+            "text": f"Allow {sources} to Tailscale-SSH to {name} in accept mode? A tagged "
+                    "source cannot use check mode [tsssh L218], and check mode stays for "
+                    "people (P7).",
+            "options": [{"label": "Allow accept mode",
+                         "description": f"the agent drafts an ssh rule {sources} → {name}, "
+                                        "action accept; you apply it in the console"},
+                        {"label": keep, "description": f"{sources} cannot Tailscale-SSH to "
+                                                       f"{name}; nothing changes"}],
+            "safe_default": keep}}]
+    if code == "TS_SSH_POLICY":
+        return [_agent("tailnet policy draft --name ssh-rule",
+                       f"add an ssh rule admitting {sources} to {name} as {user}, then "
+                       "validate and diff; MC applies it in the console; re-run this")]
+    if code == "TS_SSH_UNVERIFIED":
+        via = f" --from {source.device.node_id}" if source.mode == "from" else ""
+        return [_agent(f"tailnet diagnose {dest.node_id} --port 22 --ssh-user <user>{via}",
+                       "with <user> replaced by the host's username: Tailscale SSH admits by "
+                       "user, and usernames differ per host")]
+    if code == "POLICY_DROP":
+        return [_agent(f"tailnet policy draft --name allow-tcp-{port}",
+                       f"add a grant from {sources} to {name} on tcp:{port}, then validate and "
+                       "diff; MC applies it in the console; re-run this")]
+    if code in HOST_SIDE:
+        return _on_host(dest, name, port=port, user=user, source=source, inventory=inventory)
+    return []
+
+
+def _on_host(dest, name, *, port, user, source, inventory):
+    """Step 8: the block MC runs on the destination, the retry it watches, and the --from
+    checks of which of MC's user-owned devices may reach it."""
+    me = source.device
+    block = on_host_block(name, port, source.name(), (me.ipv4 or me.ipv6) if me else None)
+    steps = [{"who": "mc", "needs": "terminal", "do": block,
+              "why": f"{name} cannot be reached from here, which is the problem: run this on "
+                     "it from a session that can reach it (Termius on your phone, or another "
+                     "host on the bench) while the agent retries"},
+             _agent(f"tailnet diagnose {dest.node_id} --port {port}",
+                    f"retries from this host while MC watches on {name}, so the counters "
+                    "and the capture see its SYN")]
+    ssh = f" --ssh-user {user}" if user else ""
+    for other in inventory:
+        if other.tags or other.node_id in (dest.node_id, me.node_id if me else None):
+            continue
+        steps.append(_agent(
+            f"tailnet diagnose {dest.node_id} --port {port} --from {other.node_id}{ssh}",
+            f"asks the API whether {other.hostname or other.node_id}, a user-owned device, "
+            f"may reach {name}"))
+    return steps
+
+
+def _local(posture):
+    """Step 0 in production self mode: (status text, why it cannot be a source or None).
+
+    A missing binary is exit 3 (TAILSCALE_CLI_MISSING); a status that gives no answer is a
+    source that is down. Test posture runs nothing and reports nothing here.
+    """
+    if not posture.runs_tailscale:
+        return None, None
+    try:
+        text = localts.status_json(posture, STATUS_TIMEOUT)
+    except localts.Failed as exc:
+        return None, exc.reason
+    return text, source_health(text)
+
+
+def _yes(value):
+    """A boolean for the human view: yes, no, or ? when unknown."""
+    return "?" if value is None else ("yes" if value else "no")
+
+
+def _entry_lines(entry, port):
+    """One destination in the human view: its verdict line with its time, then the evidence."""
+    resolved = entry["resolved"]
+    label = (f"{resolved['hostname'] or resolved['nodeId']} ({resolved['ipv4'] or 'no IPv4'})"
+             if resolved else entry["dest"])
+    lines = [(f"{label} port {port} → {entry['verdict']} (as of {entry['measured_at']}): "
+              f"{entry['explanation']}")]
+    if resolved:
+        expiry = "off" if resolved["keyExpiryDisabled"] else f"on, expires {resolved['expires']}"
+        online, shields = (_yes(resolved["connectedToControl"]),
+                           _yes(resolved["blocksIncomingConnections"]))
+        lines.append(f"  device: {resolved['nodeId']}; online {online}; key expiry {expiry}; "
+                     f"shields-up {shields}; Tailscale SSH {_yes(resolved['sshEnabled'])}")
+    if entry["error"]:
+        lines.append(f"  not probed: {entry['error']}")
+    probes = entry["probes"]
+    if probes:
+        tcp = probes["tcp"]
+        banner = f", banner {json.dumps(tcp['banner'])}" if tcp["banner"] else ""
+        lines.append(f"  probes: tsmp {probes['tsmp']['result']}; icmp {probes['icmp']['result']} "
+                     f"(never port evidence); tcp {tcp['result']}{banner} "
+                     f"(as of {tcp['measured_at']})")
+    for test in entry["network_test"]:
+        said = test["verdict"] or f"no answer ({test['error']['code']})"
+        lines.append(f"  network: {test['src']} → {test['accept']}: {said}")
+        lines += [f"    {f['target']}: want {f['want']}, got {f['got']}"
+                  for f in test.get("failures", []) if "target" in f]
+    for test in entry["ssh_test"]:
+        said = test["verdict"] or f"no answer ({test['error']['code']})"
+        lines.append(f"  ssh ({test['mode'] or 'live policy'}): {test['src'] or '-'} as "
+                     f"{test['user']}: {said}")
+        lines += [f"    {line}" for line in test.get("errors", [])]
+    lines += [f"  policy warning: {said}" for said in entry["policy_warnings"]]
+    return lines
+
+
+def _source_line(source, ids):
+    """The human view's first evidence line: who the source is, and as which identities."""
+    if source.up is False:
+        return f"source: this host, which is not on the tailnet now ({source.reason})"
+    if source.device is None:
+        return f"source: unknown ({source.reason})"
+    how = {"live": ", self by its Tailscale addresses", "line": ", self from the self line"}
+    return (f"source: {source.device.hostname or '?'} ({source.device.node_id}) as "
+            f"{', '.join(ids) or 'no identity'}{how.get(source.self_source, '')}")
+
+
+def _envelope(posture, port, user, source, ids, entries, calls, raised, steps, measured_at):
+    """The command's envelope: exit 0 only when every destination is reachable, else exit 8."""
+    for entry in entries:
+        steps += [step for step in entry["next"] if step not in steps]
+    request_ids = []
+    for call in calls:
+        if call["request_id"] and call["request_id"] not in request_ids:
+            request_ids.append(call["request_id"])
+    data = {"port": port, "ssh_user": user, "source": source.to_dict(ids),
+            "destinations": entries, "calls": calls}
+    lines = [_source_line(source, ids)]
+    for entry in entries:
+        lines += _entry_lines(entry, port)
+    fields = {"data": data, "warnings": raised, "request_ids": request_ids,
+              "measured_at": measured_at, "lines": lines}
+    count = len(entries)
+    blocked = [entry for entry in entries if entry["verdict"] not in REACHABLE]
+    if not blocked:
+        return Envelope("diagnose", posture.kind, next=steps,
+                        headline=f"OK: {count} of {count} reachable on port {port}", **fields)
+    named = "; ".join(f"{(e['resolved'] or {}).get('hostname') or e['dest']} {e['verdict']}"
+                      for e in blocked)
+    summary = f"{len(blocked)} of {count} not reachable on port {port}"
+    error = Negative("DIAGNOSE_BLOCKED", f"{summary}: {named}", next=steps)
+    return Envelope.from_error("diagnose", posture.kind, error, headline=f"BLOCKED: {summary}",
+                               **fields)
+
+
+def run(posture, args):
+    """`tailnet diagnose`: why each destination's port is or is not reachable (§15).
+
+    Everything is read-only. Self mode probes from this host; --from asks the API about
+    another source and probes nothing. Exit 0 when every destination is OPEN,
+    ADMITTED_CHECK_MODE or ALLOWED, 8 otherwise; 3 and 4 when the run itself cannot proceed.
+    """
+    port, user = check_args(args)
+    now = datetime.now(timezone.utc)
+    raised, steps = [], []
+    if args.from_device is None:
+        status_text, problem = _local(posture)
+        if problem is not None:
+            # Step 0 failed: every destination is SOURCE_DOWN, and no API call is made.
+            source = Source("self", None, reason=problem, up=False)
+            ladder = _Ladder(posture, None, port, user, [], source, None)
+            entries = [ladder.diagnose(arg, now) for arg in args.devices]
+            return _envelope(posture, port, user, source, (), entries, [], raised, steps,
+                             format_utc(now))
+    else:
+        status_text = None
+    session = api.session(posture)
+    inventory, response = devices.fetch(session)
+    if args.from_device is None:
+        source = _self_source(posture, inventory, status_text, raised, steps)
+    else:
+        source = _from_source(args.from_device, inventory)
+    ladder = _Ladder(posture, session, port, user, inventory, source, status_text)
+    ladder.made("list_devices", response)
+    entries = [ladder.diagnose(arg, now) for arg in args.devices]
+    return _envelope(posture, port, user, source, ladder.identities, entries, ladder.calls,
+                     raised, steps, format_utc(now))
