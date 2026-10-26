@@ -146,6 +146,17 @@ can parse clean when the text is not what the rule names, port 0 cannot be conne
 exported-but-empty override silently becoming production is the fallback rule 4 forbids, and a
 symlink re-pointed after the check must not steer test reads into the real directories.
 
+**A11. (build, 2026-10-26)** §8.5 said `write_private_atomic` writes through a temp file and a
+rename, and §13.1 said the audit log is opened `O_APPEND` with mode 0600 and locked; it was built
+so that `write_private_atomic` first refuses a directory that group or other can write, and
+`append_locked` runs the §8.2 file checks (regular file, owned by the euid, no group or other bit,
+one link) on the opened log and refuses with `AUDIT_UNWRITABLE` otherwise; each function takes the
+refusal code from its caller, and a missing file raises `FileNotFoundError` for the caller to
+judge; because invariant 2 keeps credential files out of directories others can write, which a
+write must hold as well as a read, and a log that is a hard link or belongs to someone else would
+send the narrative into another file or let it be swapped, while absence means different things
+to different callers (no credential, an unanswered protected list, a token to mint).
+
 ---
 
 ## 0. The design on one page
