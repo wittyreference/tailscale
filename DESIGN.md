@@ -354,6 +354,29 @@ whether a cache is usable, so status cannot disagree with the reads; the audit l
 store of doctor's answers (D3); six lines leave no room for next steps; and §5.4's rule governs
 every first line.
 
+**A25. (build, 2026-10-26)** §6 gave the guard as `plan_tag(device, add, remove, ctx)`,
+`plan_disable_key_expiry(devices, ctx)` and `check_apply(plans, ctx, confirm, reason)` without
+saying what `ctx` holds or how a dry run gets its "apply would be refused" list; §12.2 refuses a
+target that "has `isExternal`"; §12.3 refuses `WRITE_CLIENT_TAGS_UNRECORDED` and calls an
+unchanged set a noop without ordering the two; §12.4 lists rule references by "string value
+contains" a tag; and §11.4 refuses self without saying which device is self when the live join and
+the self line disagree. It was built (1) with `guard.Context(me, protected, gate_present,
+settings_path, write, now, policy, policy_error)`, `guard.Refusal(check, code, message, node_id,
+next)` and `check_apply(…, *, applying=True)`, where `applying=False` gives the dry run's list and
+does not count a missing `--confirm`; (2) refusing `SHARED_IN` when `isExternal` is absent as well
+as when it is true; (3) leaving a missing `write.json` to C8 at apply time, with the client-tag
+checks recorded as skipped, while a `write.json` without `tags` is the C6 refusal; (4) with
+operation refusals winning over a noop, and the apply-time preconditions still judged for a noop
+under `--apply`; (5) treating both the live-joined device and the self line's device as self when
+they disagree; (6) matching a reference on the whole tag (`tag:lab:22` names `tag:lab`,
+`tag:lab2` does not), with tags and `tagOwners` lowercased; and (7) refusing a `--confirm` given
+to a plan that needs none (`CONFIRM_MISMATCH`); because a pure guard needs its inputs named; a
+device whose membership the API did not state may not be ours to change; a dry run must still plan
+for MC before any write client exists (MC1's safe default), and C8 refuses the apply anyway;
+invariant 8 says every `--apply`, a noop's included; a refusal must not depend on which source of
+self happened to answer; Tailscale parses every tag as lowercase [pol (f)] and another tag is not a
+reference; and a token where none is needed most likely comes from a stale plan.
+
 ---
 
 ## 0. The design on one page
