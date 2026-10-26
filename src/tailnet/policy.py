@@ -1,13 +1,21 @@
-# ABOUTME: The policy flows of DESIGN.md §14, pure half: the /acl/validate verdict, want/got lines, the
-# ABOUTME: array-body scan, the raw ETag, draft readiness and `policy test`'s arguments. Never parses HuJSON.
+# ABOUTME: The policy flows of DESIGN.md §14: the pure verdict, want/got, array-scan and readiness rules,
+# ABOUTME: then `policy get|draft|validate|diff|test`. The CLI never parses HuJSON: the server does.
 
+import hashlib
 import ipaddress
 import json
+import os
 import re
+import shlex
 from dataclasses import dataclass
+from datetime import datetime, timezone
+from pathlib import Path
 
-from tailnet.errors import ApiError, UsageError
+from tailnet import api, audit, output, secure_files
+from tailnet.errors import ApiError, LocalError, UsageError
 from tailnet.http import body_says
+from tailnet.output import Envelope, format_utc
+from tailnet.redact import redact
 
 PASS = "pass"
 PASS_WITH_WARNINGS = "pass-with-warnings"
@@ -349,3 +357,212 @@ def build_tests(src, accept, deny, proto):
     if deny:
         test["deny"] = deny
     return [test]
+
+
+# --- Drafts and `policy get` (§14.1, §14.2) -------------------------------------------------
+
+_NAME = re.compile(r"[a-z0-9-]{1,40}")
+DEFAULT_NAME = "draft"
+BASE, CANDIDATE, META = "base.hujson", "candidate.hujson", "meta.json"
+_FORMATS = {"hujson": api.HUJSON, "json": api.JSON}
+_LABELS = {"hujson": "HuJSON", "json": "JSON"}
+# The parts §14.1 counts: rule lists, then name-to-value maps.
+_LISTS = ("acls", "grants", "ssh", "tests", "sshTests")
+_MAPS = ("hosts", "groups", "tagOwners")
+# Drafts sit in the state directory beside the audit log, so a state directory that cannot
+# hold them is reported as one that cannot hold the log, as the apply lock is (A26).
+_STATE_CODE = "AUDIT_UNWRITABLE"
+
+
+def check_name(name):
+    """A draft's --name, held to §5.2 before any request; a draft without one is "draft"."""
+    if name is None:
+        return DEFAULT_NAME
+    if not _NAME.fullmatch(name):
+        raise UsageError("USAGE", f"--name {name!r} must be 1-40 lowercase letters, digits and "
+                                  "hyphens")
+    return name
+
+
+def draft_dir_name(moment, name):
+    """A draft directory's name: the UTC time of its fetch, then its name (§14)."""
+    return f"{moment.astimezone(timezone.utc):%Y%m%dT%H%M%SZ}-{name}"
+
+
+def sections(doc):
+    """How many of each part a policy in its JSON form holds (§14.1); None for a part whose
+    shape no policy file has."""
+    counts = {}
+    for key, kind in [*((k, list) for k in _LISTS), *((k, dict) for k in _MAPS)]:
+        value = doc.get(key, kind())
+        counts[key] = len(value) if isinstance(value, kind) else None
+    return counts
+
+
+def _sha256(data):
+    """The hex sha256 the draft records and readiness compares."""
+    return hashlib.sha256(data).hexdigest()
+
+
+def _line_count(data):
+    """Lines in a body, a last line without its newline included."""
+    return data.count(b"\n") + (1 if data and not data.endswith(b"\n") else 0)
+
+
+def _plural(count, word):
+    """`1 line`, `2 lines`."""
+    return f"{count} {word}{'' if count == 1 else 's'}"
+
+
+def _inside(path, directory):
+    """Whether `path` is `directory` or below it, both already resolved."""
+    return path == directory or directory in path.parents
+
+
+def _out_path(posture, out):
+    """Where --out may write, resolved and checked before anything is fetched.
+
+    Never into the CLI's own directories, where the file could replace a credential or
+    rewrite the audit log (invariant 6); never into a directory others can write, where the
+    0600 file could be swapped after it lands (§8.2 item 6).
+    """
+    real = Path(os.path.realpath(out))
+    for own in (posture.config_dir, posture.state_dir):
+        if _inside(real, Path(os.path.realpath(own))):
+            raise UsageError("USAGE", f"--out {out} is inside {own}, which holds the CLI's own "
+                                      "files; write the policy somewhere else")
+    try:
+        problems = secure_files.check_parent(real, os.geteuid())
+    except OSError as exc:
+        raise UsageError("USAGE", f"--out {out}: its directory cannot be used: "
+                                  f"{exc.strerror}") from None
+    if problems:
+        raise UsageError("USAGE", f"--out {out}: " + "; ".join(problems))
+    return real
+
+
+def _write_out(real, out, data):
+    """Write --out's bytes 0600 and atomically; a refusal is the argument's fault (exit 2)."""
+    try:
+        secure_files.write_private_atomic(real, data)
+    except LocalError as exc:
+        raise UsageError("USAGE", f"--out {out}: {exc.message}") from None
+    except OSError as exc:
+        raise UsageError("USAGE", f"--out {out}: cannot write it: {exc.strerror}") from None
+
+
+def _etag_line(etag_raw):
+    """The ETag as shown, with the raw header beside it."""
+    if etag_raw is None:
+        return "etag: none (the response carried no ETag header)"
+    return f"etag: {display_etag(etag_raw)} (raw header: {etag_raw})"
+
+
+def run_get(posture, args):
+    """`tailnet policy get`: the live policy exactly as served, its metadata beside it (§14.1).
+
+    The bytes go to stdout (or --out, 0600) and the ETag, hash and line count to stderr.
+    The JSON form is parsed only to count its sections; HuJSON is never parsed.
+    """
+    out = None if args.out is None else _out_path(posture, args.out)
+    reply = api.get_policy(api.session(posture), _FORMATS[args.format])
+    response, raw = reply.response, reply.data
+    measured_at = output.now_utc()
+    counted, raised = None, []
+    if args.format == "json":
+        doc = response.json()
+        if not isinstance(doc, dict):
+            raise ApiError("API_BAD_RESPONSE", f"{response.where} → {response.status}: the "
+                                               "policy is not a JSON object",
+                           http_status=response.status, request_id=response.request_id)
+        counted = sections(doc)
+        raised.append(output.warn(
+            "POLICY_JSON_NO_COMMENTS", "comments are not in this form: the JSON form leaves out "
+            "MC's comments; read or draft the default HuJSON form to keep them",
+            "pol (f), inference"))
+    # Decoded with surrogateescape so even a byte that is not UTF-8 is written back unchanged.
+    text = raw.decode("utf-8", "surrogateescape")
+    if out is not None:
+        _write_out(out, args.out, redact(text).encode("utf-8", "surrogateescape"))
+    count, digest = _line_count(raw), _sha256(raw)
+    headline = (f"OK: the live policy as {_LABELS[args.format]}, {_plural(count, 'line')}"
+                + (f", written to {args.out}" if out is not None else ""))
+    lines = [_etag_line(response.etag_raw), f"sha256: {digest}"]
+    if counted is not None:
+        lines.append("sections: " + ", ".join(f"{key} {value}" for key, value in counted.items()))
+    data = {"text": None if out is not None else raw.decode("utf-8", "replace"),
+            "etag_raw": response.etag_raw, "etag": display_etag(response.etag_raw),
+            "sha256": digest, "format": args.format, "sections": counted, "lines": count,
+            "out": None if out is None else args.out}
+    return Envelope("policy get", posture.kind, data=data, warnings=raised,
+                    request_ids=[response.request_id] if response.request_id else [],
+                    measured_at=measured_at, headline=headline, lines=lines,
+                    stdout_text=None if out is not None else text)
+
+
+def _new_draft(posture, dirname):
+    """Create a draft's directory, 0700, under the state directory's drafts/ (§14)."""
+    audit.state_dir(posture)
+    try:
+        posture.drafts_dir.mkdir(mode=0o700, exist_ok=True)
+    except OSError as exc:
+        raise LocalError(_STATE_CODE, f"cannot create {posture.drafts_dir}: "
+                                      f"{exc.strerror}") from None
+    path = posture.drafts_dir / dirname
+    try:
+        path.mkdir(mode=0o700)
+    except FileExistsError:
+        raise UsageError("USAGE", f"a draft {dirname} was made this second already; pass another "
+                                  "--name or run it again") from None
+    except OSError as exc:
+        raise LocalError(_STATE_CODE, f"cannot create {path}: {exc.strerror}") from None
+    return path
+
+
+def _write_draft_file(path, data):
+    """Write one draft file 0600 and atomically, so a reader never sees half of it."""
+    try:
+        secure_files.write_private_atomic(path, data, code=_STATE_CODE)
+    except OSError as exc:
+        raise LocalError(_STATE_CODE, f"cannot write {path}: {exc.strerror}") from None
+
+
+def _meta_bytes(meta):
+    """meta.json's bytes; redacted like any record the CLI writes, though it holds no secret."""
+    return (redact(json.dumps(meta, indent=2)) + "\n").encode("utf-8")
+
+
+def run_draft(posture, args):
+    """`tailnet policy draft`: the live HuJSON as a new draft the agent edits as text (§14.2).
+
+    base.hujson and candidate.hujson are the bytes as served; meta.json records where they
+    came from, so diff can tell a console change from the agent's own edit.
+    """
+    name = check_name(args.name)
+    reply = api.get_policy(api.session(posture), api.HUJSON)
+    response, raw = reply.response, reply.data
+    fetched = datetime.now(timezone.utc)
+    digest = _sha256(raw)
+    meta = new_meta(name, response.etag_raw, digest, format_utc(fetched), response.request_id)
+    path = _new_draft(posture, draft_dir_name(fetched, name))
+    for filename, data in ((BASE, raw), (CANDIDATE, raw), (META, _meta_bytes(meta))):
+        _write_draft_file(path / filename, data)
+    quoted = shlex.quote(str(path))
+    lines = [f"path: {path}",
+             f"{BASE} and {CANDIDATE} are the live bytes, sha256 {digest}; "
+             + _etag_line(response.etag_raw),
+             ("Edit candidate.hujson as text (the Edit tool); keep MC's comments; add tests (and "
+              "sshTests for a Tailscale SSH host) asserting the intended access"),
+             "then validate until it exits 0, diff until READY, and MC applies it in the console"]
+    steps = [{"who": "agent", "run": f"tailnet policy validate {quoted}",
+              "why": "after editing: the server parses the candidate and runs its own tests"},
+             {"who": "agent", "run": f"tailnet policy diff {quoted}",
+              "why": "READY only after a passing validate, with the live policy unchanged"}]
+    data = {"path": str(path), "name": name, "files": [BASE, CANDIDATE, META],
+            "base_etag_raw": response.etag_raw, "base_etag": display_etag(response.etag_raw),
+            "base_sha256": digest, "fetched_at": meta["fetched_at"],
+            "request_id": response.request_id}
+    return Envelope("policy draft", posture.kind, data=data, next=steps,
+                    request_ids=[response.request_id] if response.request_id else [],
+                    measured_at=meta["fetched_at"], headline=f"OK: draft {path.name} of the live "
+                                                             "policy", lines=lines)

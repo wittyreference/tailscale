@@ -1,6 +1,7 @@
 # ABOUTME: Tests for tailnet.output: the tailnet.v1 JSON envelope, human output and warnings (§5.4).
 # ABOUTME: Everything is checked as written to real stdout and stderr, after redaction.
 
+import io
 import json
 import re
 from datetime import datetime, timedelta, timezone
@@ -125,3 +126,22 @@ def test_an_envelope_whose_exit_and_outcome_disagree_is_a_bug(exit_code, outcome
 @pytest.mark.parametrize("outcome", ["ok", "dry-run", "noop", "applied"])
 def test_every_success_outcome_exits_0(outcome):
     assert Envelope("device tag", "test", outcome=outcome).ok
+
+
+def test_a_command_s_own_text_goes_to_stdout_exactly_and_its_verdict_to_stderr():
+    # policy get's bytes (§14.1): a carriage return, a non-ASCII character and a byte that is
+    # not UTF-8 all come out as they went in; only a secret's shape is redacted.
+    raw = "// MC’s note\r\n".encode() + key().encode("ascii") + b"\n\xff"
+    env = Envelope(command="policy get", posture="test", headline="OK: the live policy",
+                   lines=["etag: abc"], stdout_text=raw.decode("utf-8", "surrogateescape"))
+    stdout = io.TextIOWrapper(io.BytesIO(), encoding="utf-8")
+    stderr = io.StringIO()
+    output.emit(env, json_mode=False, stream=stdout, err_stream=stderr)
+    assert stdout.buffer.getvalue() == ("// MC’s note\r\ntskey-…[REDACTED]\n".encode()
+                                        + b"\xff")
+    assert re.fullmatch(r"OK: the live policy \(as of [0-9TZ:-]+\)\netag: abc\n",
+                        stderr.getvalue())
+    # It is never part of the JSON envelope; the command puts the text in its data instead.
+    json_out = io.StringIO()
+    output.emit(env, json_mode=True, stream=json_out)
+    assert "stdout_text" not in json.loads(json_out.getvalue())

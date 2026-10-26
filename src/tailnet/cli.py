@@ -6,7 +6,7 @@ import os
 import sys
 import traceback
 
-from tailnet import devices, dns, errors, guard, status, writes
+from tailnet import devices, dns, errors, guard, policy, status, writes
 from tailnet.output import Envelope, emit
 from tailnet.posture import API_PATH, Posture
 from tailnet.redact import install_excepthook, redact
@@ -196,6 +196,8 @@ HANDLERS = dict.fromkeys(_BUILT_BY, _not_built)
 HANDLERS["device list"] = devices.run_list
 HANDLERS["device tag"] = writes.run
 HANDLERS["device disable-key-expiry"] = writes.run
+HANDLERS["policy get"] = policy.run_get
+HANDLERS["policy draft"] = policy.run_draft
 HANDLERS["dns"] = dns.run
 HANDLERS["status"] = status.run
 

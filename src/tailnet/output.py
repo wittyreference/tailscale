@@ -30,8 +30,11 @@ class Envelope:
     """One command's result: what --json prints as a tailnet.v1 object and what the human view shows.
 
     `headline` and `lines` are the human verdict and compact block; they never appear in JSON.
-    An envelope whose exit and outcome disagree is refused at construction, because agents
-    act on the outcome and a mismatch would tell them the wrong thing.
+    `stdout_text`, when set, is what the human view puts on stdout instead, with the verdict
+    on stderr: `policy get` prints the policy itself there (§14.1), and its JSON form
+    carries the text in `data`. An envelope whose exit and outcome disagree is refused at
+    construction, because agents act on the outcome and a mismatch would tell them the
+    wrong thing.
     """
 
     command: str
@@ -46,6 +49,7 @@ class Envelope:
     measured_at: str = field(default_factory=now_utc)
     headline: str = ""
     lines: list = field(default_factory=list)
+    stdout_text: str | None = None
 
     def __post_init__(self):
         allowed = _SUCCESS_OUTCOMES if self.exit == errors.OK else {errors.ERROR_OUTCOMES.get(self.exit)}
@@ -111,18 +115,43 @@ def render_human(env):
     return "\n".join(lines) + "\n"
 
 
-def emit(env, json_mode, stream=None):
+def emit(env, json_mode, stream=None, err_stream=None):
     """Write the envelope to stdout: exactly one JSON object with --json, else the human view.
 
     Redaction runs on the finished text, so JSON-escaped and nested secrets are caught in the
-    form they would actually be printed.
+    form they would actually be printed. A human view with `stdout_text` puts that text on
+    stdout and the verdict on stderr.
     """
+    stream = sys.stdout if stream is None else stream
+    if not json_mode and env.stdout_text is not None:
+        _write_exact(stream, env.stdout_text)
+        err_stream = sys.stderr if err_stream is None else err_stream
+        err_stream.write(redact(render_human(env)))
+        err_stream.flush()
+        return
     if json_mode:
         text = json.dumps(env.to_dict(), indent=2) + "\n"
     else:
         text = render_human(env)
-    stream = sys.stdout if stream is None else stream
     stream.write(redact(text))
+    stream.flush()
+
+
+def _write_exact(stream, text):
+    """Write text so its bytes come out as they came in, redaction apart.
+
+    The text was decoded with surrogateescape, so encoding it the same way restores every
+    byte, UTF-8 or not, and writing to the binary buffer keeps the text layer from
+    translating line endings or refusing a byte its encoding lacks.
+    """
+    text = redact(text)
+    binary = getattr(stream, "buffer", None)
+    if binary is None:
+        stream.write(text)
+    else:
+        stream.flush()
+        binary.write(text.encode("utf-8", "surrogateescape"))
+        binary.flush()
     stream.flush()
 
 

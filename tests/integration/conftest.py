@@ -30,16 +30,17 @@ class Cli:
             "LANG": "C.UTF-8",
         }
 
-    def __call__(self, *args, env=None, unset=(), timeout=60):
+    def __call__(self, *args, env=None, unset=(), timeout=60, text=True):
         """Run one command; return the CompletedProcess with text stdout and stderr.
 
         `env` adds or replaces variables and `unset` removes them, so a test can run the
-        process with an override missing as well as with one changed.
+        process with an override missing as well as with one changed. `text=False` keeps
+        the output as bytes, untouched by newline translation, for byte-for-byte checks.
         """
         environ = {name: value for name, value in {**self.env, **(env or {})}.items()
                    if name not in unset}
         return subprocess.run([sys.executable, "-I", str(RUN_CLI), *args], capture_output=True,
-                              text=True, env=environ, timeout=timeout, check=False)
+                              text=text, env=environ, timeout=timeout, check=False)
 
 
 @pytest.fixture

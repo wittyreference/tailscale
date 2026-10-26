@@ -428,6 +428,25 @@ unmoved policy, and re-validating a draft whose base moved is wasted work; and a
 0, an ICMP test on port 22, or a test that asserts nothing passes or fails without answering
 anything MC asked.
 
+**A28. (build, 2026-10-26)** §14.1 said `policy get` puts the policy on stdout or in `--out`
+"byte for byte", and gave its JSON data as `{text, etag_raw, etag, sha256, format, sections}`;
+§14.2 gave no default for the optional `--name` and no code for a draft that cannot be written;
+it was built (1) passing the policy through `redact()` on its way to stdout or `--out`, which
+leaves a policy without secret-shaped text exactly as served, CRLF and non-UTF-8 bytes included,
+with the verdict line (raw and stripped ETag, sha256, line count, time) on stderr and the JSON
+form's warning coded `POLICY_JSON_NO_COMMENTS`; (2) adding `data.lines` and `data.out`, with
+`data.text` null when `--out` took the bytes; (3) refusing as `USAGE`, before any request, an
+`--out` that resolves into the config or state directory, or whose directory is missing or
+writable by group or other; and (4) naming a draft `draft` when `--name` is absent, refusing a
+second draft of one name in the same second as `USAGE`, and refusing a drafts directory or draft
+file that cannot be written as `AUDIT_UNWRITABLE`; because invariant 2 puts every output path
+through `redact()`, and a policy holding a secret's shape is exactly where byte-for-byte must
+give way, while the draft files that validate and diff judge are written as served; an `--out`
+there could replace a credential or rewrite the audit log (invariant 6), and a 0600 file in a
+directory others can write can be swapped after it lands (§8.2 item 6); §14's directory pattern
+needs a name; and drafts live beside the audit log, as the apply lock does (A26), so the same
+code names the same broken directory.
+
 ---
 
 ## 0. The design on one page

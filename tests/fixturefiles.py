@@ -22,3 +22,8 @@ def body(kind, name):
     doc = load(kind, name)
     doc.pop("_source", None)
     return doc
+
+
+def raw_bytes(kind, filename):
+    """A fixture file's bytes, whatever its type: HuJSON is served exactly as written, never parsed."""
+    return (FIXTURES / kind / filename).read_bytes()

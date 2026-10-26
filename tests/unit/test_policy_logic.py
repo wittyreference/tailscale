@@ -2,6 +2,7 @@
 # ABOUTME: scan, the ETag kept raw, draft readiness and `policy test`'s argument rules, decided without I/O.
 
 import json
+from datetime import datetime, timezone
 
 import pytest
 from fixturefiles import body
@@ -273,3 +274,29 @@ def test_policy_test_builds_one_test_and_sends_proto_only_when_given():
     # A bare host alias is a source too [spec 2533-2540].
     assert policy.build_tests("example-host-1", ["tag:fleet:443"], [], None)[0]["src"] == \
         "example-host-1"
+
+
+def test_a_draft_name_is_short_lowercase_and_names_its_directory():
+    # §5.2: --name is checked before any request; a draft without one is still named.
+    assert policy.check_name(None) == "draft"
+    assert policy.check_name("fix-ssh") == "fix-ssh"
+    for bad in ("Fix", "a" * 41, "", "fix_ssh", "../up", "fix ssh"):
+        with pytest.raises(UsageError) as caught:
+            policy.check_name(bad)
+        assert caught.value.code == "USAGE", bad
+    moment = datetime(2026, 10, 27, 1, 2, 3, tzinfo=timezone.utc)
+    assert policy.draft_dir_name(moment, "fix-ssh") == "20261027T010203Z-fix-ssh"
+
+
+def test_sections_count_each_part_of_a_json_policy():
+    # Counted only from the JSON form: HuJSON is never parsed (§14.1).
+    assert policy.sections(body("api", "policy")) == {
+        "acls": 1, "grants": 0, "ssh": 0, "tests": 0, "sshTests": 0, "hosts": 1, "groups": 1,
+        "tagOwners": 0}
+    doc = {"grants": [{}, {}], "ssh": [{}], "tests": [{}], "sshTests": [], "hosts": {},
+           "groups": {"group:a": []}, "tagOwners": {"tag:a": [], "tag:b": []}}
+    assert policy.sections(doc) == {"acls": 0, "grants": 2, "ssh": 1, "tests": 1, "sshTests": 0,
+                                    "hosts": 0, "groups": 1, "tagOwners": 2}
+    # A part in a shape a policy file never has is unknown, not zero.
+    assert policy.sections({"acls": {"not": "a list"}, "hosts": ["x"]})["acls"] is None
+    assert policy.sections({"hosts": ["x"]})["hosts"] is None

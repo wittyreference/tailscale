@@ -15,6 +15,8 @@ strips before it serves a body (the real API never sends it). `[spec NNNN]` is a
 | `api/dns-searchpaths.json` | `DnsSearchPaths`, its `searchPaths` example [spec 5623-5636] |
 | `api/dns-split.json` | `SplitDns`, its example map of domain to nameservers [spec 5637-5653] |
 | `api/dns-configuration.json` | `DnsConfiguration`'s `nameservers`, `splitDNS` and `searchPaths` examples [spec 5680-5724] with the `DnsConfigurationPreferences` field examples [spec 5667-5679]. Whether `dns:read` covers this endpoint is unverified [critic Q23] |
+| `api/policy.hujson` | `ExampleHuJSONPolicyFile` [spec 6757-6778], the value's text with the YAML block's indentation removed: the policy file as `GET /tailnet/{tailnet}/acl` serves it as HuJSON, comments and trailing commas included [spec 2260-2265]. HuJSON has no `_source` key, so this row is its citation |
+| `api/policy.json` | `ExampleJSONPolicyFile` [spec 6742-6756]: the same endpoint's `application/json` form [spec 2244-2251] |
 | `api/validate-tests-failed.json` | `POST /tailnet/{tailnet}/acl/validate`'s 200 example `testsOrValidationFailed` [spec 2660-2667]: a failed test is still HTTP 200 (critic R2) |
 | `api/validate-scim-warnings.json` | The same endpoint's 200 example `validateSCIMGroupsNotSynced` [spec 2668-2675]: warnings only |
 | `api/validate-success.json` | The same endpoint's 200 example `testsOrValidationSuccess`, an empty object [spec 2676-2678]; an empty body also passes [spec 2642] |
