@@ -645,6 +645,21 @@ every run; context lines would carry whatever sits beside the permissions, envir
 included, into the agent's transcript; and the installer's modules are imported by name, as
 `install.py` puts its own directory on its path when the wrapper runs it isolated (`-I`).
 
+**A37. (build, 2026-10-26)** §20.3 checked the upstream clone by requiring `git rev-parse HEAD ==
+<pin>` before copying `skills/tailscale/` and `LICENSE`; it was built (1) refusing, before git is
+asked anything, a pin that is not a full 40-character commit id; (2) requiring as well that `git
+status --porcelain --untracked-files=all --ignored` reports nothing, so no file in the checkout
+differs from the pin; (3) refusing a symlink anywhere under `skills/tailscale/`, and a `LICENSE`
+that is missing or not a regular file; (4) running every git call with the variables that point
+git at another repository (`GIT_DIR`, `GIT_WORK_TREE`, `GIT_INDEX_FILE` and their kin) removed and
+`GIT_TERMINAL_PROMPT=0`; and (5) judging that a directory is a clone by its own `.git`; because
+the copy is taken from the files on disk, so a changed, planted or ignored file would travel as if
+it came from the pin, and an abbreviated id is a lookup a later commit can make ambiguous; a link
+in the copy would put whatever it points at into the skills directory; a `GIT_DIR` left by a hook
+would aim the clone, checkout or HEAD check at another repository, and a public clone that asks
+for a password has gone wrong with nobody at the prompt; and git asked about a folder walks up the
+tree, where a home directory kept in git would answer for it.
+
 ---
 
 ## 0. The design on one page
