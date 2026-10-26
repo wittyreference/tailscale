@@ -510,6 +510,39 @@ class Installer:
                 ("upstream", self.upstream), ("settings", self.settings), ("mcp", self.mcp),
                 ("path", self.path), ("record", self.record)]
 
+    def checkout_files(self, source):
+        """source_files for one directory of this checkout, refused while git ignores a file in it.
+
+        .gitignore names the CLI's credential files as a backstop for a misplaced copy, and
+        `git status`, which sets the dirty flag, never lists an ignored file, so such a copy
+        would be installed 0644 under a record calling the checkout clean. Bytecode is ignored
+        as well and never copied. Without git's answer nothing is copied, as A37 has it for
+        the upstream clone.
+        """
+        if not os.path.lexists(self.repo / ".git"):
+            raise StepError(f"{self.repo} is not a git checkout, so a file git would ignore in "
+                            f"{source} cannot be told from the code; nothing was copied")
+        relative = source.relative_to(self.repo).as_posix()
+        try:
+            code, out, err = upstream.git(["-C", self.repo, "ls-files", "-z", "--others",
+                                           "--ignored", "--exclude-standard", "--", relative],
+                                          self.environ)
+        except upstream.UpstreamError as exc:
+            raise StepError(f"git cannot list the files it ignores in {source} ({exc}); "
+                            "nothing was copied") from None
+        if code != 0:
+            last = (err.strip().splitlines() or ["no message"])[-1]
+            raise StepError(f"git cannot list the files it ignores in {source} (exit {code}: "
+                            f"{last}); nothing was copied")
+        ignored = sorted(path for path in out.split("\0") if path
+                         and "__pycache__" not in path.split("/") and not path.endswith(".pyc"))
+        if ignored:
+            raise StepError(f"{source} holds files git ignores, which no commit holds and which "
+                            f"would be installed 0644: {', '.join(ignored)}; nothing was copied. "
+                            "Move them out of the checkout (credentials belong in "
+                            "~/.config/tailnet) and run the installer again")
+        return source_files(source)
+
     def source_state(self):
         """The checkout's commit and whether it has uncommitted changes; (None, None) unknown."""
         if not os.path.lexists(self.repo / ".git"):
@@ -549,7 +582,7 @@ class Installer:
     def lib(self):
         """The CLI package, rules.json with it, copied into place (§20.2)."""
         source = self.repo / "src" / "tailnet"
-        files = source_files(source)
+        files = self.checkout_files(source)
         if installed_tree(self.target.lib) != wanted_tree(files):
             self.act(f"copy {source} to {self.target.lib} (dirs 0755, files 0644)",
                      lambda: (make_dirs(self.target.lib.parent, DIR_MODE),
@@ -647,7 +680,7 @@ class Installer:
                             f"({upstream.describe(path, self.environ)}); left alone. Move it "
                             "aside and run the installer again")
         source = self.repo / "skill" / "tailnet"
-        files = source_files(source)
+        files = self.checkout_files(source)
         if owner == "ours" and (marker.get("commit"), marker.get("dirty")) == (
                 self.commit, self.dirty):
             kept = {**files, MARKER: marker_bytes(marker)}

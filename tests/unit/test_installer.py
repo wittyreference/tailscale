@@ -390,6 +390,65 @@ def test_the_launcher_runs_python_isolated_and_has_aboutme_lines(box, tmp_path):
     assert "lib: no changes" in out and "launcher: no changes" in out
 
 
+@pytest.fixture
+def checkout(tmp_path):
+    """A clone of this repository at HEAD, to plant files in without touching the real one."""
+    clone = tmp_path / "checkout"
+    git(tmp_path, "clone", "--quiet", str(REPO), str(clone), env=environ_for(tmp_path))
+    return clone
+
+
+def run_from(box, repo):
+    """Run the installer against the box from another checkout; return (exit code, output)."""
+    out = io.StringIO()
+    installer = install.Installer(box.target, install.Options(upstream=False, mcp=False),
+                                  environ=box.env, out=out, now=NOW, repo=repo)
+    return installer.run(), out.getvalue()
+
+
+def test_a_file_git_ignores_in_the_copied_directories_stops_the_copy(box, checkout):
+    # .gitignore names the CLI's credential files as a backstop for a misplaced copy, and
+    # `git status` never lists an ignored file, so such a copy would have been installed 0644
+    # under a record saying the checkout was clean. Bytecode is ignored too, and never copied.
+    planted = {"src/tailnet/write.secret": "test-client-" + "write001",
+               "skill/tailnet/read-token.json": '{"token": "x"}',
+               "skill/tailnet/.env": "X=1\n",
+               "src/tailnet/__pycache__/cli.cpython-310.pyc": "bytecode"}
+    for relative, text in planted.items():
+        (checkout / relative).parent.mkdir(exist_ok=True)
+        (checkout / relative).write_text(text)
+    code, out = run_from(box, checkout)
+    assert code == 1, out
+    assert "lib: STOPPED" in out and "src/tailnet/write.secret" in out
+    assert "skill: STOPPED" in out
+    assert "skill/tailnet/.env" in out and "skill/tailnet/read-token.json" in out
+    assert "__pycache__" not in out
+    assert not os.path.lexists(box.target.lib) and not os.path.lexists(box.target.skill)
+    added = json.loads(box.target.record.read_text())["added"]
+    assert (added["lib"], added["skill"]) == (False, False)
+    # With the misplaced files gone, the same checkout installs, bytecode and all left behind.
+    for relative in planted:
+        if not relative.endswith(".pyc"):
+            (checkout / relative).unlink()
+    code, out = run_from(box, checkout)
+    assert code == 0, out
+    assert source_tree(box.target.lib) == source_tree(checkout / "src" / "tailnet")
+    assert json.loads(box.target.record.read_text())["dirty"] is False
+
+
+def test_a_checkout_git_cannot_answer_for_copies_nothing(box, tmp_path):
+    # Without git's view there is no telling a misplaced credential from the code, so the
+    # copy fails closed, as the upstream copy does without a clean status (A37).
+    plain = tmp_path / "plain"
+    for part in ("src", "skill", "spec"):
+        shutil.copytree(REPO / part, plain / part,
+                        ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
+    code, out = run_from(box, plain)
+    assert code == 1, out
+    assert "lib: STOPPED" in out and "skill: STOPPED" in out and "not a git checkout" in out
+    assert not os.path.lexists(box.target.lib) and not os.path.lexists(box.target.skill)
+
+
 def test_a_foreign_tailscale_skill_is_left_alone(box, upstream_repo):
     canonical = box.home / ".agents" / "skills" / "tailscale"
     canonical.mkdir(parents=True)

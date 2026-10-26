@@ -1033,6 +1033,20 @@ installed code. Because dropping the targets needs no new rule, while ask rules 
 spellings (`Bash(make*install*)`, `Bash(*installer/install.py*)`) would change what MC is
 prompted for, which is MC's decision and is left open.
 
+**A63. (review, 2026-10-26) finding 24:** §20.2 copied `src/tailnet/` and `skill/tailnet/` from the
+files on disk, skipping only bytecode, and §20.1 took the dirty flag from `git status --porcelain`,
+which never lists an ignored file; so a misplaced `write.secret`, `read-token.json` or `.env` in
+either directory, the names `.gitignore` keeps there as "a backstop for a misplaced copy", was
+installed 0644 into the lib or skill directory, where no deny rule reaches, under a record and
+marker saying `dirty: false`. The lib and skill steps now ask `git ls-files --others --ignored
+--exclude-standard` about their directory first and stop, copying nothing, when it names any file
+but bytecode (`__pycache__/`, `*.pyc`, which are never copied), naming each one; a checkout with no
+`.git` of its own, or a git that cannot answer, stops them too. The dirty flag is unchanged, since
+an ignored file can no longer travel; because A37 already refuses this for the upstream copy ("a
+changed, planted or ignored file would travel as if it came from the pin"), and invariant 2 keeps
+a credential 0600 or refused. `git archive HEAD` was not used: it would drop the uncommitted
+tracked edits the dirty flag exists to allow.
+
 ---
 
 ## 0. The design on one page
