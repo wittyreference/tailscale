@@ -426,6 +426,24 @@ def test_a_2xx_whose_reread_differs_exits_6(cli, net, armed):
     assert logged["observed_after"] == {"keyExpiryDisabled": False}
 
 
+@pytest.mark.parametrize("status", [200, 504])
+def test_a_reread_that_returns_another_device_confirms_nothing(cli, net, armed, status):
+    # claude-factory already has key expiry off, so judging pi5's write by its record would
+    # call a write that did not land applied; a mismatched record is a failed re-read (A26 (8)).
+    net.outcome("pi5", status, lands=False)
+    net.loopback.route("GET", f"{API}/device/{IDS['pi5']}", lambda request: (
+        200, {"X-Tailscale-Request-Id": "REQ-get-wrong"}, net.device("claude-factory")))
+    result = disable(cli, "pi5", apply=True)
+    env = envelope(result)
+    assert (result.returncode, env["outcome"], env["error"]["code"]) == (
+        6, "unconfirmed", "WRITE_UNCONFIRMED"), result.stderr
+    assert "the API returned nFactory1CNTRL" in env["error"]["message"]
+    assert len(net.writes()) == 1 and net.device("pi5")["keyExpiryDisabled"] is False
+    [logged] = writes_logged(armed)
+    assert (logged["outcome"], logged["confirmed"], logged["failure"], logged["observed_after"]) \
+        == ("failed", False, "unconfirmed", None)
+
+
 def test_a_429_on_a_write_is_sent_exactly_once(cli, net, armed):
     net.outcome("pi5", 429, lands=False, headers={"Retry-After": "0"})
     result = disable(cli, "pi5", apply=True)
