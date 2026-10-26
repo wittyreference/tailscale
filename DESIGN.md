@@ -789,6 +789,24 @@ cached (§9.2); a temporary `HOME` must never reach MC's real settings (A38); th
 people and hosts and is the suite's own; MC quotes values with their times (Corrections); and make
 stops at the first failing command, so the failure stays the last thing on a phone screen.
 
+**A43. (build, 2026-10-26)** §25 had the README say the console audit log shows "every write with
+the Client ID as actor", §26 opened MC's first session with answering MC1-MC4, §25 item 2 took the
+three things from §19.2 item 3, and §21 named no README test; it was built (1) naming each applied
+write's event ("Update tags for node", "Disable key expiry for node" [AUDIT L301, L295]) and marking
+its actor **[unverified]**, and adding that `tailnet dns` asks for `/dns/configuration` on every run,
+which may leave a "Failed request" each time **[unverified]** (critic Q23); (2) opening the first run
+with creating both clients, and ending it with `make e2e` and M1-M4 from §29 item 33's list; (3)
+giving the first of the three things as MC's 2026-10-26 answer, checked by `tailnet status` (A1,
+A40); and (4) with `tests/unit/test_readme.py` holding the outline, every `tailnet` command and flag
+to the parser, every `make` target and installer flag to their files, one command per code block,
+and no paragraph or list item over 60 words; because the credentials research (§9) finds no page
+saying a write made with an OAuth token names the client as its actor, and the Corrections forbid
+filling that gap by inference, while a refused configuration read is a console event MC would
+otherwise not expect; A1 answered MC1-MC4, so asking again would contradict the record, and item
+33 puts e2e and the manual checks in MC's first run; A40 retired the doctor question the third
+thing used to point at; and a guide MC follows from a phone is only as good as its commands, which
+the parser and the Makefile can check where prose review cannot.
+
 ---
 
 ## 0. The design on one page
