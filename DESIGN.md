@@ -542,6 +542,44 @@ named by a fixed hostname breaks on a rename (P4) and names nothing on another t
 user-owned devices are the ones §3.2's question asks about; a clause telling MC to add a rule that
 already admits is wrong; and a rerun line must not run unedited.
 
+**A33. (build, 2026-10-26)** §16 gave doctor's checks and steps but did not say what an audit
+log that fails its checks means for the settled answers, where the questions go in the
+`doctor.run` line, how the checks that run other programs or read the install behave in test
+posture, which failures are FAIL, or what the line records; it was built so that (1) a log that
+fails the §8.2 checks on read-back holds no answer doctor trusts: every settle-gated step
+measures again, L7 FAILs (exit 8) with MC's fix, and a `doctor.run` line that cannot be appended
+is the warning `AUDIT_UNWRITABLE` with `data.audit_line.written` false; (2) the line adds
+`questions` (ids, priority order; A24), each `settled` entry adds the `status` it was measured
+with, a run records only the answers it measured itself, and the newest answer per question is
+found by scanning back through every `doctor.run` line (`audit.records`), an answer whose time
+cannot be read never counting as settled; (3) git, claude and bash are started only through
+`doctor.run_program`, which refuses test posture and any word naming tailscale, and
+`test_only_localts_runs_the_tailscale_binary` allows exactly that function and a literal program
+list; in test posture L8 judges the rules alone and L11 is SKIP; the `~/.claude.json` fallback for
+the docs MCP server is not read; the drift pins are constants a test holds to `spec/SHA256SUMS`,
+and the live spec is read with no token through `api.get_openapi`, `Accept: */*`; (4) a read
+credential that is missing, unsafe or malformed exits 3 with its own code after every local
+check has run; a token the API refuses at S1 is S1 FAIL (exit 8) with every later step SKIP; S4,
+S6 and a refused `/dns/nameservers` are FAIL, while a settle-gated step that got no answer is WARN
+and measured again next run; (5) in single-client mode S2 takes S1's mint as its answer when S1
+minted in this run, since that mint already asked for exactly the four read scopes; (6) the
+protected-list proposal needs a known self, so in test posture, where self comes from the very
+file that is missing, L6 says why there is none; and (7) S7a tests every other tagged device with
+an IPv4 address, S7b aims at the first of them as self's first tag, each question is also in
+`next` as an `ask_mc` entry, and doctor imports `diagnose` (identities, the alias) and `dns` (the
+lookup), one way, as A22 did; because a log another account could write, or a hard link into
+another file, could hold planted answers that would stop doctor re-measuring for 30 days, while a
+fresh measurement costs at most one console event; status reads the questions from that line,
+and a reused answer must keep the verdict it was given; test posture never runs tailscale or
+leaves its home (§7.1), and only programs named in one place can be audited; `~/.claude.json`
+can hold Claude Code's own credentials, which this CLI has no reason to open; the installed spec
+copy does not exist until the installer (§29 item 29), while the pins are already in the repo;
+§16.4 names exit 3 for the credential alone, and a refused token is a health finding with
+console steps; the inventory, the policy and DNS are what the commands read; a second identical
+mint would cost MC a console event and settle nothing new; a proposal without a self line would
+be refused as `PROTECTED_MALFORMED` when MC ran it; and §5.4's `next` is where agents look for
+who acts.
+
 ---
 
 ## 0. The design on one page

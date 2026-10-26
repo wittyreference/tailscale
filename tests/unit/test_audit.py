@@ -111,6 +111,23 @@ def test_last_returns_the_newest_matching_event(posture):
         audit.last(posture, "doctor.runs")
 
 
+def test_records_returns_every_matching_event_newest_first(posture):
+    assert audit.records(posture, "doctor.run") == []
+    for n in range(60):
+        audit.append(posture, {"event": "doctor.run", "n": n, "pad": "p" * 2000}, argv=[])
+        audit.append(posture, {"event": "token.mint", "n": n}, argv=[])
+    secure_files.append_locked(posture.state_dir / "audit.jsonl", b"{torn\n")
+    found = audit.records(posture, "doctor.run")
+    # Doctor scans back through every run for the newest answer to each question (§16.3).
+    assert [record["n"] for record in found] == list(range(59, -1, -1))
+    with pytest.raises(ValueError):
+        audit.records(posture, "doctor")
+    (posture.state_dir / "audit.jsonl").chmod(0o660)
+    with pytest.raises(errors.LocalError) as caught:
+        audit.records(posture, "doctor.run")
+    assert caught.value.code == "AUDIT_UNWRITABLE"
+
+
 def test_count_lines_counts_every_record(posture):
     assert audit.count_lines(posture) == 0
     for _ in range(3):

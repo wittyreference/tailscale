@@ -6,7 +6,17 @@ import os
 import sys
 import traceback
 
-from tailnet import devices, diagnose, dns, errors, guard, policy, status, writes
+from tailnet import (
+    devices,
+    diagnose,
+    dns,
+    doctor,
+    errors,
+    guard,
+    policy,
+    status,
+    writes,
+)
 from tailnet.output import Envelope, emit
 from tailnet.posture import API_PATH, Posture
 from tailnet.redact import install_excepthook, redact
@@ -204,6 +214,7 @@ HANDLERS["policy test"] = policy.run_test
 HANDLERS["dns"] = dns.run
 HANDLERS["diagnose"] = diagnose.run
 HANDLERS["status"] = status.run
+HANDLERS["doctor"] = doctor.run
 
 
 def _wants_json(argv):

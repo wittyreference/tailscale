@@ -255,6 +255,19 @@ class ReadToken:
         self._cred = None
         self._token = None
         self._from_cache = False
+        # Tokens this source minted: each is one "Create OAuth access token" event in MC's
+        # console [AUDIT L329], which doctor counts for MC (§16.4).
+        self.mints = 0
+
+    @property
+    def token(self):
+        """The Token in use, or None before any request has needed one."""
+        return self._token
+
+    @property
+    def from_cache(self):
+        """Whether the token in use came from the cache, so cost no mint in this command."""
+        return self._from_cache
 
     def bearer(self):
         """The access token to send, loading or minting it on first use."""
@@ -305,6 +318,7 @@ class ReadToken:
         single = credentials.mode(self._posture) == "single-client"
         scope = " ".join(READ_SCOPES) if single else None
         token = mint(self._posture, self._transport, self._cred, scope=scope)
+        self.mints += 1
         if token.cacheable:
             self._store(token)
         else:

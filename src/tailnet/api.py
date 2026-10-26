@@ -199,6 +199,18 @@ def dns_configuration(session):
     return Reply(_object(response), response)
 
 
+def get_openapi(session):
+    """The API's own OpenAPI document as served, for doctor's drift check (§16.1 L11).
+
+    No token goes with it: the document is public [api §12.19], so no credential is loaded
+    for a question about the spec. It was served as YAML on 2026-10-26; Accept asks for
+    whatever the server's own form is, since a JSON rendering would never match the pin.
+    """
+    response = session.transport.request("GET", "", query={"outputOpenapiSchema": "true"},
+                                         accept="*/*", idempotent=True)
+    return Reply(response.body, response)
+
+
 def set_device_tags(session, node_id, tags, write_token):
     """Write one: replace a device's tags with `tags`, the full new set (§12.4) [spec 541-582].
 

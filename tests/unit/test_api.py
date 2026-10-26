@@ -220,3 +220,14 @@ def test_a_body_of_the_wrong_shape_is_a_bad_response(loopback, session, call, pa
     loopback.route("GET", API + path, (200, {}, json.dumps(body)))
     exc = failure(call, session)
     assert (exc.exit, exc.code) == (4, "API_BAD_RESPONSE")
+
+
+def test_the_openapi_document_is_read_without_a_token(loopback, posture, transport):
+    # Doctor's drift check (§16.1 L11) needs no credential, so none is loaded or sent.
+    loopback.route("GET", API, (200, {"Content-Type": "application/yaml"}, "openapi: 3.1.0\n"))
+    reply = api.get_openapi(api.Session(transport, tokens.ReadToken(posture, transport)))
+    assert reply.data == b"openapi: 3.1.0\n"
+    [request] = loopback.requests
+    assert (request.method, request.path, request.query) == ("GET", API, "outputOpenapiSchema=true")
+    assert request.header("authorization") is None
+    assert request.header("accept") == "*/*"

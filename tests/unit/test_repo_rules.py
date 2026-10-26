@@ -230,13 +230,42 @@ def starts_programs(tree):
     return False
 
 
+# doctor's install and drift checks (§16.1 L8, L11) ask three other programs: git for the
+# upstream clone's HEAD and the upstream pin, claude for the docs MCP server, bash for the
+# login PATH. That is the one exception, held to one function and a fixed list.
+DOCTOR_PROGRAMS = {"git", "claude", "bash"}
+
+
+def calls_named(tree, name):
+    """Every call of a function by this name, plain or as a method."""
+    return [n for n in ast.walk(tree) if isinstance(n, ast.Call)
+            and getattr(n.func, "id", getattr(n.func, "attr", None)) == name]
+
+
 def test_only_localts_runs_the_tailscale_binary():
     # localts is the one place tailscale runs, and it refuses in test posture (§7.1). Netguard
     # catches a run at test time; this catches the code that could make one before it exists.
     modules = sorted(PACKAGE.rglob("*.py"))
     runners = {path.name for path in modules if starts_programs(parsed(path))}
-    assert runners == {"localts.py"}
+    assert runners == {"localts.py", "doctor.py"}
     # The check itself sees each way in.
     for source in ("import subprocess", "from subprocess import run", "os.execv('x', [])",
                    "from os import posix_spawn", "os.system('x')"):
         assert starts_programs(ast.parse(source)), source
+    # doctor reaches subprocess in exactly one function, which refuses test posture and any
+    # word naming tailscale at run time, and every call of it names an allowed program as a
+    # literal: nothing can pass it a program through a variable.
+    tree = parsed(PACKAGE / "doctor.py")
+    users = {name for name, fn in top_level_functions(tree).items()
+             if any(isinstance(n, ast.Name) and n.id == "subprocess" for n in ast.walk(fn))}
+    assert users == {"run_program"}
+    calls = calls_named(tree, "run_program")
+    assert calls
+    for call in calls:
+        argv = call.args[1]
+        assert isinstance(argv, ast.List), ast.unparse(call)
+        program = argv.elts[0]
+        assert isinstance(program, ast.Constant) and program.value in DOCTOR_PROGRAMS
+        assert not [e for e in argv.elts if isinstance(e, ast.Constant) and e.value == "tailscale"]
+    from tailnet import doctor
+    assert doctor.PROGRAMS == DOCTOR_PROGRAMS

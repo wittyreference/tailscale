@@ -109,6 +109,25 @@ def test_a_cached_token_is_reused_until_five_minutes_before_expiry(loopback, pos
     assert len(loopback.requests) == 1
 
 
+def test_the_read_token_says_where_it_came_from_and_counts_its_mints(loopback, posture,
+                                                                       transport):
+    # Doctor reports "reused cache: no audit event" or "minted: 1 event" from these (§16.2 S1).
+    source = tokens.ReadToken(posture, transport)
+    assert (source.token, source.from_cache, source.mints) == (None, False, 0)
+    write_cache(posture, access_token("cached09"), expires_in=3000)
+    source.bearer()
+    assert (source.token.access_token, source.from_cache, source.mints) == (
+        access_token("cached09"), True, 0)
+    assert source.token.scope == READ_SCOPES
+    loopback.route("POST", TOKEN, token_reply(access_token("renewed9")))
+    assert source.renew() == access_token("renewed9")
+    assert (source.from_cache, source.mints) == (False, 1)
+    fresh = tokens.ReadToken(posture, transport)
+    cache_path(posture).unlink()
+    fresh.bearer()
+    assert (fresh.from_cache, fresh.mints) == (False, 1)
+
+
 def test_a_cache_for_another_client_id_is_ignored(loopback, posture, transport):
     write_cache(posture, access_token("other001"), expires_in=3000, client_id="kOther0001CNTRL")
     loopback.route("POST", TOKEN, token_reply(access_token("fresh004")))

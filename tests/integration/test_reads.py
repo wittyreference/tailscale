@@ -243,12 +243,19 @@ def test_no_secret_or_token_reaches_stdout_stderr_audit_or_any_file_outside_conf
     loopback.route("POST", TOKEN, token_reply(fresh))
     loopback.route("GET", DEVICES, (401, {}, {"message": f"revoked: {fresh}"}))
     assert run("--json", "device", "list").returncode == 3
+    # doctor, whose reads come back refused or failed with the token quoted (exit 8: S4 and
+    # S6 FAIL); its findings, its audit line and its settled answers must not keep it.
+    loopback.route("GET", API + "/tailnet/-/keys/kRead0001CNTRL",
+                   (500, {}, {"message": f"internal: saw Bearer {fresh}"}))
+    loopback.route("GET", API + "/tailnet/-/acl", (403, {}, {"message": f"forbidden: {fresh}"}))
+    assert run("--json", "doctor").returncode == 8
+    assert run("doctor", "--settle").returncode == 8
     # A grammar error; a write whose pre-read is refused, with a reason that quotes a secret,
     # which its audit line must not keep; and a command not built yet.
     assert run("--json", "device", "tag", "pi5", "--appl").returncode == 2
     assert run("device", "tag", "pi5", "--add", "tag:fleet", "--apply", "--reason",
                f"rotate {read_secret}").returncode == 3
-    assert run("--json", "doctor").returncode == 1
+    assert run("--json", "credentials", "set", "read").returncode == 1
 
     secrets = [read_secret, write_secret, READ_TOKEN, stale, fresh]
     for printed in outputs:

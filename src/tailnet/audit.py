@@ -133,6 +133,30 @@ def last(posture, event_name):
     return None
 
 
+def records(posture, event_name):
+    """Every record of `event_name`, newest first; an empty list when there is none.
+
+    Doctor scans back through all its runs for the newest answer to each question, since a
+    run records only what it measured itself (§16.3). Lines that do not parse are skipped,
+    as in last(), and a log that fails the private-file checks is refused the same way.
+    """
+    if event_name not in EVENTS:
+        raise ValueError(f"{event_name!r} is not an audit event (DESIGN.md §13.2)")
+    found = []
+    try:
+        with secure_files.open_private(log_path(posture), code=_CODE) as (fd, st):
+            for line in _lines_newest_first(fd, st.st_size):
+                try:
+                    record = json.loads(line)
+                except (UnicodeDecodeError, ValueError):
+                    continue
+                if isinstance(record, dict) and record.get("event") == event_name:
+                    found.append(record)
+    except FileNotFoundError:
+        return []
+    return found
+
+
 def count_lines(posture):
     """Count the records in the log; a log not yet written has none."""
     try:

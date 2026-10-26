@@ -26,6 +26,14 @@ class Entry:
     why: str | None
     line: int
 
+    def matches(self, device):
+        """Whether this entry names the device: its nodeId exactly, or its hostname or first
+        label in any case. Doctor uses it to report entries that name no device."""
+        folded = self.text.lower()
+        return (self.text == device.node_id
+                or bool(device.hostname and folded == device.hostname.lower())
+                or bool(device.first_label() and folded == device.first_label().lower()))
+
 
 @dataclass(frozen=True)
 class Protected:
@@ -46,10 +54,7 @@ class Protected:
     def protects(self, device):
         """Why this device is protected, or None. The self line's device is always protected."""
         for entry in self.entries:
-            folded = entry.text.lower()
-            if (entry.text == device.node_id
-                    or (device.hostname and folded == device.hostname.lower())
-                    or (device.first_label() and folded == device.first_label().lower())):
+            if entry.matches(device):
                 return f"listed as {entry.text}" + (f": {entry.why}" if entry.why else "")
         if device.node_id == self.self_node_id:
             return _SELF_WHY

@@ -1,15 +1,22 @@
 # ABOUTME: Tests for doctor's pure parts (DESIGN.md §16): when a settle-gated step re-measures, the
 # ABOUTME: questions for MC in priority order, the protected-list proposal, and the console accounting.
 
+import hashlib
+import json
 import re
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
+import pytest
 from fixturefiles import body
 
 from tailnet import doctor, protected
 from tailnet.credentials import READ_SCOPES
 from tailnet.devices import normalise
 from tailnet.output import format_utc
+from tailnet.posture import Posture
+
+REPO = Path(__file__).resolve().parents[2]
 
 NOW = datetime(2026, 10, 27, 1, 5, 0, tzinfo=timezone.utc)
 
@@ -182,3 +189,88 @@ def test_counts_cover_every_status():
     checks = [doctor.Check("L1", "Python", status, None, "", {}, format_utc(NOW), [])
               for status in ("PASS", "PASS", "WARN", "INFO", "SKIP")]
     assert doctor.counts(checks) == {"pass": 2, "warn": 1, "fail": 0, "info": 1, "skip": 1}
+
+
+def test_the_pins_doctor_checks_drift_against_are_the_repo_pins():
+    # L11 compares the live OpenAPI document and upstream's HEAD with these (§16.1, §20.3).
+    [line] = (REPO / "spec" / "SHA256SUMS").read_text().splitlines()
+    assert doctor.PINNED_SPEC_SHA256 == line.split()[0]
+    spec = (REPO / "spec" / "tailscale-openapi.yaml").read_bytes()
+    assert hashlib.sha256(spec).hexdigest() == doctor.PINNED_SPEC_SHA256
+    assert doctor.UPSTREAM_PIN == "4f05d353efc56962546aa26ccc59bb08ca699ad1"
+
+
+@pytest.fixture
+def production(tmp_path):
+    """A production posture whose real directories are a temporary home: nothing is read."""
+    return Posture.from_env({}, real_home=tmp_path)
+
+
+def test_doctor_starts_no_program_in_test_posture(tmp_path, syscalls):
+    environ = {"TAILNET_API_BASE": "http://127.0.0.1:9", "TAILNET_HOME": str(tmp_path / "tn")}
+    test = Posture.from_env(environ, real_home=tmp_path / "real")
+    with pytest.raises(doctor.ProgramRefused):
+        doctor.run_program(test, ["git", "--version"], 5)
+    assert syscalls.processes() == []
+
+
+@pytest.mark.parametrize("argv", [["tailscale", "version"], ["sh", "-c", "true"],
+                                  ["git", "-C", "/opt/tailscale", "status"], []])
+def test_doctor_runs_only_its_three_programs_and_never_tailscale(production, syscalls, argv):
+    with pytest.raises(ValueError):
+        doctor.run_program(production, argv, 5)
+    assert syscalls.processes() == []
+
+
+def test_doctor_runs_an_allowed_program_and_redacts_what_it_prints(production):
+    code, out = doctor.run_program(production, ["git", "--version"], 10)
+    assert code == 0 and out.startswith("git version")
+
+
+def test_the_member_probe_asks_only_whether_autogroup_member_admits_a_tag():
+    live = body("scenario", "policy")
+    live["hosts"] = {"Tailnet-Diag-Dst": "100.64.0.99"}
+    live["groups"] = {"group:admins": ["mc@example.com"]}
+    candidate = doctor.member_candidate(live, "100.64.0.11", "tag:dev")
+    # Only the probe's own grant and test: the live rules and tests would answer instead.
+    assert set(candidate) == {"tagOwners", "groups", "hosts", "grants", "tests"}
+    assert candidate["tagOwners"] == live["tagOwners"]
+    # The alias never shadows one of MC's hosts, whatever its case.
+    assert candidate["hosts"] == {"Tailnet-Diag-Dst": "100.64.0.99",
+                                  "tailnet-diag-dst-2": "100.64.0.11"}
+    assert candidate["grants"] == [{"src": ["autogroup:member"], "dst": ["tailnet-diag-dst-2"],
+                                    "ip": ["tcp:22"]}]
+    assert candidate["tests"] == [{"src": "tag:dev", "proto": "tcp",
+                                   "accept": ["100.64.0.11:22"]}]
+    assert "grants" in live and live["hosts"] == {"Tailnet-Diag-Dst": "100.64.0.99"}
+    without_groups = doctor.member_candidate(body("scenario", "policy"), "100.64.0.11", "tag:dev")
+    assert "groups" not in without_groups
+    with pytest.raises(ValueError):
+        doctor.member_candidate(live, "100.64.0.11", "100.64.0.10")
+
+
+def test_the_install_markers_must_name_the_installed_commit_and_the_pin(tmp_path):
+    claude, share = tmp_path / "claude", tmp_path / "share"
+    parts = doctor.install_markers(claude, share)
+    assert parts["skill"]["ok"] is False and "missing" in parts["skill"]["detail"]
+    assert parts["upstream_copy"]["ok"] is False
+    for folder in (claude / "skills" / "tailnet", claude / "skills" / "tailscale", share):
+        folder.mkdir(parents=True)
+    (share / "install.json").write_text('{"commit": "c0ffee1", "dirty": false}')
+    (claude / "skills" / "tailnet" / doctor.MARKER).write_text('{"commit": "c0ffee1"}')
+    (claude / "skills" / "tailscale" / doctor.MARKER).write_text(
+        json.dumps({"pin": doctor.UPSTREAM_PIN}))
+    parts = doctor.install_markers(claude, share)
+    assert (parts["skill"]["ok"], parts["upstream_copy"]["ok"]) == (True, True)
+    # A skill copied from another commit than the one installed, or an upstream copy off the
+    # pin, is a stale install.
+    (claude / "skills" / "tailnet" / doctor.MARKER).write_text('{"commit": "deadbee"}')
+    (claude / "skills" / "tailscale" / doctor.MARKER).write_text('{"pin": "4f05d35"}')
+    parts = doctor.install_markers(claude, share)
+    assert (parts["skill"]["ok"], parts["upstream_copy"]["ok"]) == (False, False)
+    # A marker that is a symlink is never followed: it could point at anything.
+    marker = claude / "skills" / "tailnet" / doctor.MARKER
+    marker.unlink()
+    marker.symlink_to(share / "install.json")
+    parts = doctor.install_markers(claude, share)
+    assert parts["skill"]["ok"] is False and "symlink" in parts["skill"]["detail"]
