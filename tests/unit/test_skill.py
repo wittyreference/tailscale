@@ -1,5 +1,5 @@
-# ABOUTME: Tests for the tailnet skill (DESIGN.md §19): SKILL.md's frontmatter, size and order, and every
-# ABOUTME: command, flag and permission string it names held to the parser and rules.json.
+# ABOUTME: Tests for the tailnet skill (DESIGN.md §19): SKILL.md's frontmatter, size and order, every command,
+# ABOUTME: flag and permission string it names held to the parser and rules.json, and the six references.
 
 import re
 from pathlib import Path
@@ -354,3 +354,98 @@ def test_questions_go_one_per_turn_with_a_numbered_list_and_a_recommendation():
     lowered = rule.lower()
     assert "one question per turn" in lowered
     assert "numbered list" in lowered and "recommend" in lowered and "why" in lowered
+
+
+# --- The references (DESIGN.md §19.3) ---
+
+REFERENCES = SKILL_DIR / "references"
+# §19.3's six files: what the skill reads on demand, beyond SKILL.md.
+REFERENCE_FILES = {"tailnet-facts.md", "gotchas.md", "diagnose-port.md", "policy-workflow.md",
+                   "credentials.md", "upstream-corrections.md"}
+# One of our references as SKILL.md names it. A path with anything in front, such as upstream's
+# `~/.claude/skills/tailscale/references/<topic>.md`, belongs to another skill.
+_OUR_REFERENCE = re.compile(r"(?<![\w./~-])references/([^\s`)]+)")
+
+
+def reference_text(name):
+    """One reference file, as it will be installed."""
+    return (REFERENCES / name).read_text(encoding="utf-8")
+
+
+def test_every_reference_exists_one_level_deep():
+    # Claude may read only part of a file it reaches through another reference, with head
+    # -100 [pkg §3], so SKILL.md names every reference itself and none sits deeper.
+    entries = sorted(REFERENCES.iterdir())
+    assert all(path.is_file() and not path.is_symlink() for path in entries)
+    assert {path.name for path in entries} == REFERENCE_FILES
+    assert set(_OUR_REFERENCE.findall(body())) == REFERENCE_FILES
+    # The index at the end gives each its own line saying when to read it.
+    text = skill_text()
+    start, end = section(text, "References")
+    indexed = [_OUR_REFERENCE.findall(item) for item in bullets(text[start:end])]
+    assert sorted(name for names in indexed for name in names) == sorted(REFERENCE_FILES)
+
+
+def github_anchor(heading):
+    """The anchor GitHub gives a heading: lowercased, punctuation dropped, spaces as hyphens."""
+    return re.sub(r"[^\w\- ]", "", heading.strip().lower()).replace(" ", "-")
+
+
+def test_reference_files_over_100_lines_start_with_contents():
+    # A reference over 100 lines opens with a table of contents [pkg §3], so even a partial
+    # read shows everything the file holds and where.
+    long_files = [name for name in sorted(REFERENCE_FILES)
+                  if len(reference_text(name).splitlines()) > 100]
+    assert long_files
+    for name in long_files:
+        text = reference_text(name)
+        headings = re.findall(r"^## (.+)$", text, re.MULTILINE)
+        assert headings and headings[0] == "Contents", f"{name}: the first section is not Contents"
+        start, end = section(text, "Contents")
+        assert text[:start].count("\n") < 30, f"{name}: Contents starts too far down"
+        # Its list names every other section, in order, by the anchor each link points at.
+        links = re.findall(r"^(?:\d+\.|-) \[[^\]]+\]\(#([^)\s]+)\)$", text[start:end],
+                           re.MULTILINE)
+        assert links == [github_anchor(h) for h in headings[1:]], name
+
+
+def test_upstream_corrections_flags_api_md_100_103():
+    # Upstream posts {"src","dst"} to the preview endpoint, which takes `type` and
+    # `previewFor` and a policy file as its body [spec 2381-2440]: copied, the request fails
+    # (§14.5). The corrections file must say so, and say that it wins over upstream.
+    text = reference_text("upstream-corrections.md")
+    assert "This file wins" in text[:text.index("## ")]
+    rows = [line for line in text.splitlines()
+            if line.startswith("|") and "`references/api.md:100-103`" in line]
+    assert any("**Wrong**" in row and "previewFor" in row and "policy file" in row
+               for row in rows)
+
+
+def test_tailnet_facts_opens_with_the_staleness_rule():
+    # §19.3: every row there is a dated claim about the past, so the rule comes before any.
+    text = reference_text("tailnet-facts.md")
+    opening = text[:text.index("## ")]
+    assert "Staleness rule" in opening and "tailnet device list --json" in opening
+
+
+def test_credentials_reference_records_mc_s_answer_and_keeps_the_consent_text():
+    # A1: the reference records MC's 2026-10-26 answer instead of asking again, and keeps
+    # the consent text as the record of what MC accepted.
+    text = reference_text("credentials.md")
+    start, end = section(text, "1. What MC accepted (2026-10-26)")
+    record = text[start:end]
+    assert "Devices → Core: Write reaches every device" in record
+    assert "MC chose **Two clients**" in record and "Do not ask again" in record
+
+
+def test_every_reference_file_ends_with_its_dated_sources():
+    # §19.3: every fact carries its source and date, so each file ends with what it rests on
+    # and when that was read.
+    for name in sorted(REFERENCE_FILES):
+        text = reference_text(name)
+        last = re.findall(r"^## (.+)$", text, re.MULTILINE)[-1]
+        assert re.fullmatch(r"(?:\d+\. )?Sources", last), f"{name} does not end with its sources"
+        start, end = section(text, last)
+        # Its opening line says when they were read, which is the date every fact carries.
+        assert re.search(r"^Read\b.*\b20\d\d-\d\d-\d\d\b", text[start:end], re.MULTILINE), \
+            f"{name}: the sources do not say when they were read"

@@ -287,9 +287,8 @@ Read or fetched 2026-10-26.
 
 - `DESIGN`: `DESIGN.md` Amendments A1-A2, §0, §2, §8, §9, §11.4, §12, §16, §19.2, §28 in this repo.
 - `critic`: `docs/research/critic.md` (2026-10-26).
-- credentials research §N: the credentials track `research/credentials.md` (2026-10-26). DESIGN
-  cites it as `[cred §N]`, but it is **not committed** under `docs/research/`; every fact used here
-  was re-checked against the first-party pages below.
+- credentials research §N: `docs/research/credentials.md` (2026-10-26), which DESIGN cites as
+  `[cred §N]`; every fact used here was re-checked against the first-party pages below.
 - `sigint pN:L`: the earlier session's transcript extract (2026-10-25T23:05Z-23:58Z), a working file
   that is not committed (DESIGN A2). p2:34 and p2:40-42 were re-read for this file.
 - `spec`: the OpenAPI spec, sha256 `b3532da71b7bc5f37fd030f324aaaa1e59df72ac025e7d15b4e3d268ea15ac38`

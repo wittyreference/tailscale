@@ -46,7 +46,7 @@ Tags: **[unverified]** and **[inference]**. Keys resolve in [Sources](#11-source
 
 | Command | Exit codes (DESIGN §5.2) |
 |---|---|
-| `tailnet policy get [--format hujson\|json] [--out FILE]` | 0 / 3 / 4. Bytes go to stdout exactly as served; the ETag, sha256 and `measured_at` go to stderr |
+| `tailnet policy get [--format hujson\|json] [--out FILE]` | 0 / 3 / 4. Bytes go to stdout as served, through the redactor, which changes only secret-shaped text (DESIGN A28); the ETag, sha256 and `measured_at` go to stderr |
 | `tailnet policy draft [--name NAME]` | 0 / 3 / 4 |
 | `tailnet policy validate TARGET` (a draft directory or a file) | 0 pass, with or without warnings / 8 fail / 2 array-shaped file / 3 / 4 |
 | `tailnet policy diff DRAFT` | 0 READY / 8 NOT READY / 3 / 4 |
@@ -246,7 +246,7 @@ Why each piece:
 
 Read or fetched 2026-10-26.
 
-- `DESIGN`: `DESIGN.md` §5.2, §14, §19.2, D17 in this repo.
+- `DESIGN`: `DESIGN.md` §5.2, §14, §19.2, D17 and Amendment A28 in this repo.
 - `critic`, `policy-access`, `mc`: `docs/research/critic.md`, `policy-access.md`,
   `mc-tailnet.md` (all 2026-10-26). P-numbers are MC's decisions as listed in `tailnet-facts.md` §5.
 - `spec`: the OpenAPI spec, sha256 `b3532da71b7bc5f37fd030f324aaaa1e59df72ac025e7d15b4e3d268ea15ac38`

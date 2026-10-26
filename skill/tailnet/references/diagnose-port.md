@@ -110,7 +110,7 @@ calls made. Human output gives one verdict line per host, then the evidence, eac
 | `SHIELDS_UP` | Gate | The device refuses all incoming tailnet connections | — | On the host: `tailscale get shields-up` |
 | `PATH_DOWN` | Self mode; TSMP failed | A connectivity fault, not policy [manage L41] | — | `tailscale netcheck`, `tailscale status`; the official skill's `connectivity.md` |
 | `OPEN` | TCP `open`, and Tailscale SSH off or admitted with `accept` | The port is reachable through both policy and host | That `ssh` will log in: a wrong user and a missing key look alike (tailnet-ssh FINDINGS §12) | `ssh -v <user>@<ipv4>` |
-| `ADMITTED_CHECK_MODE` | User source; admitted only by a `check` rule | Reachable after a browser check each period | Unattended access | MC's case for the phone (P7) |
+| `ADMITTED_CHECK_MODE` | User source; admitted only by a `check` rule; and the path holds: TCP `open` in self mode, network allowed in `--from` mode (DESIGN A31) | Reachable after a browser check each period | Unattended access | MC's case for the phone (P7) |
 | `TS_SSH_CHECK_FOR_TAGGED` | Tagged source; only a `check` rule matches | It can never work: "An SSH access rule from a tagged device cannot be in check mode" [SSH L218] | — | An `accept` rule `tag:dev` → `tag:fleet` needs MC's answer to MC6 |
 | `TS_SSH_POLICY` | Tailscale SSH on; network allowed; `ssh` denies both ways | The `ssh` section has no rule from S to this host for that user | — | `policy-workflow.md`, the `ssh` rule shape |
 | `TS_SSH_UNVERIFIED` | Tailscale SSH on; network allowed; no `--ssh-user` | Nothing about SSH admission yet | — | Rerun with `--ssh-user` |
@@ -118,15 +118,18 @@ calls made. Human output gives one verdict line per host, then the evidence, eac
 | `ALLOWED` | `--from` mode; network allowed; Tailscale SSH off or admitted with `accept` | The policy permits it | That the host answers: no probe runs from here | — |
 | `REFUSED_BY_HOST` | Self mode; TCP `refused`; network allowed | The SYN passed Tailscale's filter and the host reset it: nothing listening on that address | — | On-host block |
 | `HOST_SIDE_DROP` | Self mode; TCP `timeout`; network allowed; Tailscale SSH off | The policy allows it; the host firewall or sshd's bind is the suspect | — | On-host block. If the policy changed within the last minute, rerun once first (propagation timing [unverified]) |
-| `TS_SSH_TIMEOUT_UNEXPLAINED` | Self mode; TCP `timeout`; network allowed; Tailscale SSH on | tailscaled claims port 22 itself, so a host firewall is probably not in the path [inference] | — | On-host block; the `ssh` probe result is shown as evidence |
-| `INCONCLUSIVE` | Anything else (probe or API errors; `sshEnabled` unknown with a timeout) | — | — | Every fact is reported and both Tailscale SSH hypotheses listed; a peer's `sshHostKeys` is a weak hint only [unverified] |
+| `TS_SSH_TIMEOUT_UNEXPLAINED` | Self mode; TCP `timeout`; network allowed; Tailscale SSH on, and its `ssh` section admitted the source (DESIGN A31) | tailscaled claims port 22 itself, so a host firewall is probably not in the path [inference] | — | On-host block; the `ssh` probe result is shown as evidence |
+| `INCONCLUSIVE` | Anything else: probe or API errors, or `sshEnabled` unknown on port 22 with the network allowed (DESIGN A31) | — | — | Every fact is reported and both Tailscale SSH hypotheses listed; a peer's `sshHostKeys` is a weak hint only [unverified] |
 
 ## 5. The on-host block
 
-The CLI prints this for host-side verdicts as `next: who=mc needs=terminal`. It runs **on the
-destination**, from a session that can reach it: MC's phone through Termius, or albini → pi5 →
-spec5 over the bench wire (fleet.yaml:86). Hand MC the block in one paste, and say what it proves.
-Meanwhile suggest `tailnet diagnose <dest> --from iphone192` to see which device can reach it.
+The CLI prints this for the three host-side verdicts (`REFUSED_BY_HOST`, `HOST_SIDE_DROP`,
+`TS_SSH_TIMEOUT_UNEXPLAINED`) as `next: who=mc needs=terminal`, filled in with the destination,
+this host's name and address, and the port (DESIGN A32); the template below shows port 22. It runs
+**on the destination**, from a session that can reach it: MC's phone through Termius, or albini →
+pi5 → spec5 over the bench wire (fleet.yaml:86). Hand MC the block in one paste, and say what it
+proves. Beside it the CLI suggests `tailnet diagnose <dest> --from <nodeId>` for each of MC's
+user-owned devices; run those to see which device can reach it.
 
 ```sh
 # On <dest>, while the agent retries from claude-factory:
@@ -241,7 +244,7 @@ Each is reported as unknown when it matters, never filled in.
 
 Read or fetched 2026-10-26.
 
-- `DESIGN`: `DESIGN.md` §5.2, §5.3, §15, §24, §26 in this repo.
+- `DESIGN`: `DESIGN.md` §5.2, §5.3, §15, §24, §26 and Amendments A31-A32 in this repo.
 - `mc`, `critic`, `api`, `policy-access`: `docs/research/mc-tailnet.md`, `critic.md`,
   `api-surface.md`, `policy-access.md` (all 2026-10-26).
 - `fleet.yaml`: `/home/user/tailnet-ssh/fleet/fleet.yaml` at `2cab922` (2026-10-10).
