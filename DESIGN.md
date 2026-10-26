@@ -723,6 +723,20 @@ added, and without it a guess could remove rules MC wrote; a rule spelled for on
 is not present in another's settings; a skipped removal leaves what it would have removed; and
 those directories hold other programs' files.
 
+**A40. (build, 2026-10-26)** §19.2 gave SKILL.md's description the words "can't reach `<host>` over
+Tailscale", item 1 a "`$ARGUMENTS` line" whose text holds no variable, item 3's first bullet the
+check `tailnet doctor` (question `write-client-consent`), and §21.2 a 5,000-token test counted as
+characters / 4 without saying where the count starts; it was built with "can't reach a host over
+Tailscale"; with `$ARGUMENTS` written into that line, so Claude Code puts MC's arguments there;
+with `tailnet status`, which shows the clients present, as the first bullet's check; and with the
+count starting at the file's first byte, frontmatter included, plus 2,000 characters for the
+injected `tailnet status --brief`; because a claude.ai upload refuses a description that holds an
+XML tag [pkg §2.2], which `<host>` is shaped like, and portable frontmatter exists so that such an
+upload would pass; `$ARGUMENTS` is the documented substitution [pkg §4.1], while what Claude Code
+does with arguments a skill never places is not in the research; A1 retired that doctor question,
+so it can no longer check anything; and the injected status lands above the hard rules, while
+counting more than Claude Code renders can only err on the early side.
+
 ---
 
 ## 0. The design on one page
