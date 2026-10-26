@@ -447,6 +447,25 @@ directory others can write can be swapped after it lands (§8.2 item 6); §14's 
 needs a name; and drafts live beside the audit log, as the apply lock does (A26), so the same
 code names the same broken directory.
 
+**A29. (build, 2026-10-26)** §14.3 said `policy validate`'s TARGET is "a draft directory or a
+file", §14.4 printed the diff "with line numbers", and neither said how draft files are read or
+what a NOT READY draft's next step is; it was built (1) taking a directory TARGET, and `policy
+diff`'s DRAFT, only when it sits directly under the drafts directory with a v1 `meta.json`, and
+refusing a file TARGET inside the config directory, each refusal `USAGE` before any request, as
+is a TARGET that is missing, a symlink, not a regular file or over 8 MiB (the response cap); (2)
+reading draft and TARGET files through `secure_files.read_regular`, which checks neither owner
+nor mode; (3) recording in `meta.validated` the sha256 of exactly the bytes sent, and raising
+each validate warning as `POLICY_WARNING`; (4) printing each diff line with its number in base
+and in candidate; (5) giving a NOT READY draft its first reason as the error and headline, the
+rest as lines, and a next step by that reason (validate, or re-draft); and (6) calling a draft
+with no edits READY with nothing for MC to apply; because validate writes `meta.json` into the
+directory it is given, and drafts live under the state directory, never in a repository; a
+credential named as TARGET would be sent to the API; a draft holds no secret, and the agent's
+editor may rewrite `candidate.hujson` with a mode of its own **[unverified]**, while a symlink in
+a draft could send another file in its place; MC finds an edit in the console's editor by its
+line; the first reason decides what the agent does next; and e2e E8 expects a fresh draft to be
+READY after validate.
+
 ---
 
 ## 0. The design on one page

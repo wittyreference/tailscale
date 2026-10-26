@@ -198,6 +198,8 @@ HANDLERS["device tag"] = writes.run
 HANDLERS["device disable-key-expiry"] = writes.run
 HANDLERS["policy get"] = policy.run_get
 HANDLERS["policy draft"] = policy.run_draft
+HANDLERS["policy validate"] = policy.run_validate
+HANDLERS["policy diff"] = policy.run_diff
 HANDLERS["dns"] = dns.run
 HANDLERS["status"] = status.run
 

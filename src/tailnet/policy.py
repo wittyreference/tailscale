@@ -1,6 +1,7 @@
 # ABOUTME: The policy flows of DESIGN.md §14: the pure verdict, want/got, array-scan and readiness rules,
 # ABOUTME: then `policy get|draft|validate|diff|test`. The CLI never parses HuJSON: the server does.
 
+import difflib
 import hashlib
 import ipaddress
 import json
@@ -11,8 +12,8 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
-from tailnet import api, audit, output, secure_files
-from tailnet.errors import ApiError, LocalError, UsageError
+from tailnet import api, audit, http, output, secure_files
+from tailnet.errors import ApiError, LocalError, Negative, UsageError
 from tailnet.http import body_says
 from tailnet.output import Envelope, format_utc
 from tailnet.redact import redact
@@ -566,3 +567,247 @@ def run_draft(posture, args):
                     request_ids=[response.request_id] if response.request_id else [],
                     measured_at=meta["fetched_at"], headline=f"OK: draft {path.name} of the live "
                                                              "policy", lines=lines)
+
+
+# --- `policy validate` and `policy diff` (§14.3, §14.4) --------------------------------------
+
+# A policy larger than the largest response the CLI accepts could never be read back, so no
+# draft or file over it is read either.
+MAX_POLICY = http.MAX_BODY
+_HEX64 = re.compile(r"[0-9a-f]{64}")
+_HUNK = re.compile(r"@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@")
+_VERDICTS = frozenset({PASS, PASS_WITH_WARNINGS, FAIL})
+# meta.json's keys and what each may hold; the ETag and request ID are null when the server
+# sent none.
+_META_TYPES = {"name": str, "base_etag_raw": (str, type(None)), "base_sha256": str,
+               "fetched_at": str, "request_id": (str, type(None)), "validated": (dict, type(None))}
+_CONSOLE = "https://console.tailscale.com/admin/acls/file"
+_HANDOFF = (f"MC applies it: {_CONSOLE} → make the edits shown above → Save.",
+            "Saving re-runs the policy's tests; a failing test blocks the save.")
+
+
+def parse_meta(raw):
+    """A draft's meta.json as `policy draft` and `policy validate` write it; ValueError says why not."""
+    try:
+        meta = json.loads(raw)
+    except ValueError:
+        raise ValueError("is not JSON") from None
+    # JSON's true is Python's 1, so the version's type is checked as well as its value.
+    if not isinstance(meta, dict) or type(meta.get("v")) is not int or meta["v"] != 1:
+        raise ValueError("is not a v1 draft record")
+    for key in _META_TYPES:
+        if key not in meta:
+            raise ValueError(f"has no {key}")
+    wrong = [key for key, kinds in _META_TYPES.items() if not isinstance(meta[key], kinds)]
+    if wrong:
+        raise ValueError(f"holds the wrong kind of value for {', '.join(wrong)}")
+    if not _HEX64.fullmatch(meta["base_sha256"]):
+        raise ValueError("has no sha256 for its base")
+    validated = meta["validated"]
+    if validated is not None and not (
+            isinstance(validated.get("sha256"), str) and _HEX64.fullmatch(validated["sha256"])
+            and validated.get("verdict") in _VERDICTS):
+        raise ValueError("has a validate record without a sha256 and a verdict")
+    return meta
+
+
+def _numbered(diff):
+    """Each unified-diff line with its line number in base and in candidate, for MC's editor."""
+    lines, old, new = list(diff[:2]), 0, 0
+    for line in diff[2:]:
+        hunk = _HUNK.match(line)
+        if hunk:
+            # An empty range names the line before it, so counting starts one later.
+            old = int(hunk[1]) + (hunk[2] == "0")
+            new = int(hunk[3]) + (hunk[4] == "0")
+            lines.append(line)
+            continue
+        mark, text = line[:1], line[1:]
+        left = old if mark in " -" else ""
+        right = new if mark in " +" else ""
+        lines.append(f"{left:>5} {right:>5} {mark} {text}")
+        old += mark in " -"
+        new += mark in " +"
+    return lines
+
+
+def diff_lines(base, candidate):
+    """The base-to-candidate unified diff with three lines of context (§14.4): its text, and
+    the same lines numbered. Both are empty when nothing changed.
+    """
+    before = [line.decode("utf-8", "replace") for line in base.splitlines()]
+    after = [line.decode("utf-8", "replace") for line in candidate.splitlines()]
+    diff = list(difflib.unified_diff(before, after, BASE, CANDIDATE, n=3, lineterm=""))
+    if not diff:
+        return "", []
+    return "\n".join(diff) + "\n", _numbered(diff)
+
+
+def _read(path, shown):
+    """A draft file or a TARGET file's bytes; anything in the way is the argument's fault (exit 2)."""
+    try:
+        return secure_files.read_regular(path, MAX_POLICY)
+    except FileNotFoundError:
+        raise UsageError("USAGE", f"{shown} does not exist") from None
+    except secure_files.Unreadable as exc:
+        raise UsageError("USAGE", f"refusing to read {shown}: {exc}") from None
+    except OSError as exc:
+        raise UsageError("USAGE", f"cannot read {shown}: {exc.strerror}") from None
+
+
+def _draft_dir(posture, given):
+    """The draft directory `given` names, resolved; only a directory `policy draft` made counts.
+
+    Drafts live directly under the state directory's drafts/ (§14): a directory anywhere
+    else, a repository included, is never treated as one or written to.
+    """
+    real = Path(os.path.realpath(given))
+    if not (real.is_dir() and real.parent == Path(os.path.realpath(posture.drafts_dir))):
+        raise UsageError("USAGE", f"{given} is not a draft: drafts are the directories "
+                                  f"`tailnet policy draft` makes under {posture.drafts_dir}")
+    return real
+
+
+def _load_meta(draft):
+    """A draft's meta.json, checked; one the CLI did not write means this is not its draft."""
+    try:
+        return parse_meta(_read(draft / META, draft / META))
+    except ValueError as exc:
+        raise UsageError("USAGE", f"{draft} is not a draft this CLI made: meta.json "
+                                  f"{exc}") from None
+
+
+def _failure_line(failure):
+    """One failure line as the human view shows it."""
+    who = f"{failure['user']}: " if failure["user"] else ""
+    if "raw" in failure:
+        return who + failure["raw"]
+    return f"{who}{failure['target']}  want {failure['want']}, got {failure['got']}"
+
+
+def _warned(verdict):
+    """Raise each validate warning on stderr and into the envelope [spec 2668-2675]."""
+    return [output.warn("POLICY_WARNING", _attributed(entry), "spec 2668-2675")
+            for entry in verdict.warnings]
+
+
+def _why_it_failed(verdict, what):
+    """The words for a failed verdict, by what it rests on."""
+    if verdict.reason == "errors":
+        return f"{what} failed: {_plural(len(verdict.errors), 'error line')} from the server"
+    if verdict.reason == "HTTP 400":
+        return f"the server could not parse {what} (HTTP 400): {verdict.message}"
+    if verdict.reason == "message without data":
+        return f"the server said {verdict.message!r} about {what}, with no details"
+    return (f"the server's answer about {what} has a shape this CLI does not know, so it is not "
+            f"read as a pass: {verdict.message}")
+
+
+def run_validate(posture, args):
+    """`tailnet policy validate TARGET`: the server parses a candidate and runs its own tests (§14.3).
+
+    TARGET is a draft directory, whose candidate.hujson is sent and whose meta.json records
+    the verdict and the hash of exactly the bytes sent, or a file, which records nothing.
+    An array-shaped body is refused before anything is sent.
+    """
+    target = args.target
+    real = Path(os.path.realpath(target))
+    if real.is_dir():
+        draft = _draft_dir(posture, target)
+        meta = _load_meta(draft)
+        body = _read(draft / CANDIDATE, draft / CANDIDATE)
+    else:
+        draft = meta = None
+        # A file in the config directory is a credential: it is never sent anywhere.
+        if _inside(real, Path(os.path.realpath(posture.config_dir))):
+            raise UsageError("USAGE", f"{target} is in {posture.config_dir}, which holds "
+                                      "credentials; it is never sent")
+        body = _read(real, target)
+    check_validate_body(body)
+    response = api.validate_policy(api.session(posture), body, api.HUJSON)
+    verdict = parse_verdict(response.status, response.body)
+    digest, at = _sha256(body), output.now_utc()
+    if draft is not None:
+        meta["validated"] = {"sha256": digest, "verdict": verdict.verdict, "at": at,
+                             "request_id": response.request_id, "messages": verdict.messages()}
+        _write_draft_file(draft / META, _meta_bytes(meta))
+    raised = _warned(verdict)
+    quoted = shlex.quote(str(draft)) if draft is not None else None
+    lines = [f"target: {real} ({'draft' if draft else 'file'})", f"sha256: {digest}",
+             "verdict recorded in meta.json" if draft else "a file: no verdict is recorded"]
+    lines += [_failure_line(failure) for failure in verdict.failures]
+    data = {"target": target, "kind": "draft" if draft else "file", "sha256": digest,
+            "recorded": draft is not None, **verdict.to_dict()}
+    fields = {"data": data, "warnings": raised, "lines": lines, "measured_at": at,
+              "request_ids": [response.request_id] if response.request_id else []}
+    if not verdict.passed:
+        steps = [] if draft is None else [
+            {"who": "agent", "run": f"tailnet policy validate {quoted}",
+             "why": "after fixing candidate.hujson as text"}]
+        error = Negative("POLICY_INVALID", _why_it_failed(verdict, "the candidate"), next=steps)
+        return Envelope.from_error("policy validate", posture.kind, error, **fields)
+    headline = ("OK: PASS: the server parsed it and its tests passed" if verdict.verdict == PASS
+                else f"OK: PASS WITH WARNINGS: {_plural(len(verdict.warnings), 'warning')}, "
+                     "printed on stderr")
+    steps = [] if draft is None else [
+        {"who": "agent", "run": f"tailnet policy diff {quoted}",
+         "why": "shows the edits and says whether MC can apply them"}]
+    return Envelope("policy validate", posture.kind, next=steps, headline=headline, **fields)
+
+
+def _not_ready_steps(reason, draft, meta):
+    """What the agent does about the first reason a draft is not ready."""
+    quoted = shlex.quote(str(draft))
+    if reason in (NOT_VALIDATED, CHANGED):
+        return [{"who": "agent", "run": f"tailnet policy validate {quoted}",
+                 "why": "readiness needs a passing verdict on the candidate as it stands"}]
+    if reason == FAILED:
+        return [{"who": "agent", "run": f"tailnet policy validate {quoted}",
+                 "why": "after fixing candidate.hujson as text"}]
+    return [{"who": "agent", "run": f"tailnet policy draft --name {shlex.quote(meta['name'])}",
+             "why": "start again from the live policy and carry this draft's edits over as "
+                    "text, so MC's console change is kept"}]
+
+
+def run_diff(posture, args):
+    """`tailnet policy diff DRAFT`: the edits, a drift check, and whether MC can apply it (§14.4).
+
+    The live policy is fetched again, because a draft made before MC changed something in
+    the console would undo that change; READY needs it unmoved and the candidate as it
+    stands validated.
+    """
+    draft = _draft_dir(posture, args.draft)
+    meta = _load_meta(draft)
+    base = _read(draft / BASE, draft / BASE)
+    candidate = _read(draft / CANDIDATE, draft / CANDIDATE)
+    reply = api.get_policy(api.session(posture), api.HUJSON)
+    live, response = reply.data, reply.response
+    state = readiness(meta, base_sha256=_sha256(base), candidate_sha256=_sha256(candidate),
+                      live_etag_raw=response.etag_raw, live_sha256=_sha256(live))
+    text, numbered = diff_lines(base, candidate)
+    data = {"path": str(draft), "name": meta["name"], "ready": state.ready,
+            "reasons": list(state.reasons), "diff": text, "changed": bool(text),
+            "base_sha256": meta["base_sha256"], "candidate_sha256": _sha256(candidate),
+            "live_sha256": _sha256(live), "base_etag_raw": meta["base_etag_raw"],
+            "live_etag_raw": response.etag_raw, "live_etag": display_etag(response.etag_raw),
+            "validated": meta["validated"]}
+    fields = {"data": data, "request_ids": [response.request_id] if response.request_id else []}
+    if not state.ready:
+        first, *others = state.reasons
+        error = Negative("DRAFT_NOT_READY", first, next=_not_ready_steps(first, draft, meta))
+        return Envelope.from_error("policy diff", posture.kind, error, headline=f"NOT READY: {first}",
+                                   lines=[f"also: {reason}" for reason in others] + numbered,
+                                   **fields)
+    validated = meta["validated"]
+    headline = (f"READY: candidate sha256:{data['candidate_sha256'][:12]} validated "
+                f"{validated['verdict'].upper()} at {validated.get('at')}; live unchanged since "
+                f'draft (ETag "{display_etag(response.etag_raw)}")')
+    if not text:
+        return Envelope("policy diff", posture.kind, headline=headline,
+                        lines=["no edits: the candidate is the live policy; nothing to apply"],
+                        **fields)
+    steps = [{"who": "mc", "needs": "console",
+              "do": f"open {_CONSOLE}, make the edits shown, and Save",
+              "why": "no client of MC's holds policy_file: MC applies every policy change"}]
+    return Envelope("policy diff", posture.kind, headline=headline, next=steps,
+                    lines=numbered + list(_HANDOFF), **fields)

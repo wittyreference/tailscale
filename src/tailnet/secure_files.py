@@ -1,6 +1,7 @@
-# ABOUTME: The only code that opens credential, protected, token and audit files: ssh StrictModes-style
-# ABOUTME: refusals on read, atomic 0600 writes, and one-line appends under an exclusive lock.
+# ABOUTME: The only code that opens credential, protected, token, audit and draft files: ssh StrictModes
+# ABOUTME: refusals on read, atomic 0600 writes, one-line locked appends, and safe reads of plain files.
 
+import errno
 import fcntl
 import os
 import secrets
@@ -150,6 +151,44 @@ def read_private(path, max_bytes, *, code="CREDENTIAL_UNSAFE"):
     if len(data) > max_bytes:
         # It grew between fstat and read; the limit holds on what was actually read.
         raise _refuse("read", path, [f"it grew past the {max_bytes}-byte limit"], code)
+    return data
+
+
+class Unreadable(Exception):
+    """A plain file read_regular will not read; the message says why, the caller words the refusal."""
+
+
+def read_regular(path, max_bytes):
+    """Read a file that holds no secret whole: a policy draft, or a file the agent names.
+
+    Its owner and mode are not checked, because nothing in it is secret and an editor may
+    rewrite it with a mode of its own. What is checked keeps the read itself safe: no
+    symlink is followed, so a link cannot send another file (a credential) where this one
+    was going; only a regular file is read, since a FIFO blocks and a device never ends;
+    and nothing over `max_bytes`. A missing file raises FileNotFoundError, any other
+    failure OSError, for the caller to judge.
+    """
+    path = Path(path)
+    if stat.S_ISLNK(os.lstat(path).st_mode):
+        raise Unreadable("it is a symlink")
+    try:
+        fd = os.open(path, _READ_FLAGS)
+    except OSError as exc:
+        if exc.errno == errno.ELOOP:
+            # Swapped for a symlink since the lstat: O_NOFOLLOW refused it.
+            raise Unreadable("it is a symlink") from None
+        raise
+    try:
+        st = os.fstat(fd)
+        if not stat.S_ISREG(st.st_mode):
+            raise Unreadable("it is not a regular file")
+        if st.st_size > max_bytes:
+            raise Unreadable(f"it is {st.st_size} bytes, over the {max_bytes}-byte limit")
+        data = _read_at_most(fd, max_bytes + 1)
+    finally:
+        os.close(fd)
+    if len(data) > max_bytes:
+        raise Unreadable(f"it grew past the {max_bytes}-byte limit")
     return data
 
 

@@ -209,3 +209,219 @@ def test_policy_reads_without_a_read_credential_exit_3_and_send_nothing(cli, liv
         result = cli("--json", *args)
         assert (result.returncode, envelope(result)["error"]["code"]) == (3, "CREDENTIAL_MISSING")
     assert loopback.requests == []
+
+
+# The edit an agent makes with its Edit tool: a test asserting the intended access, added as
+# text before the closing brace, so MC's comments and trailing commas stay as they were.
+ADDED_TEST = '  "tests": [{"src": "user1@example.com", "accept": ["example-host-1:22"]}],\n'
+
+
+def draft(cli, name="fix-ssh"):
+    """Make a draft through the CLI and return its directory."""
+    result = cli("--json", "policy", "draft", "--name", name)
+    assert result.returncode == 0, result.stderr
+    return Path(envelope(result)["data"]["path"])
+
+
+def edit(path, text=ADDED_TEST):
+    """Insert text before candidate.hujson's last closing brace, the way an editor would."""
+    candidate = path / "candidate.hujson"
+    data = candidate.read_bytes()
+    at = data.rindex(b"}")
+    candidate.write_bytes(data[:at] + text.encode() + data[at:])
+    return candidate.read_bytes()
+
+
+def meta_of(path):
+    """A draft's meta.json."""
+    return json.loads((path / "meta.json").read_text())
+
+
+def test_validate_posts_candidate_bytes_as_hujson_and_records_the_verdict(cli, live, configured,
+                                                                          tmp_path):
+    path = draft(cli)
+    candidate = edit(path)
+    result = cli("--json", "policy", "validate", str(path))
+    assert result.returncode == 0, result.stderr
+    [post] = live.requests("POST", VALIDATE)
+    # The bytes as edited, comments and all: the server is the only parser [critic R1].
+    assert post.body == candidate
+    assert post.header("content-type") == "application/hujson"
+    assert post.header("authorization") == f"Bearer {READ_TOKEN}"
+    env = envelope(result)
+    assert (env["outcome"], env["data"]["verdict"], env["data"]["recorded"]) == ("ok", "pass", True)
+    assert env["request_ids"] == ["REQ-validate"]
+    validated = meta_of(path)["validated"]
+    assert re.fullmatch(TIME, validated.pop("at"))
+    assert validated == {"sha256": sha256(candidate), "verdict": "pass",
+                         "request_id": "REQ-validate", "messages": []}
+    assert [step["run"] for step in env["next"]] == [f"tailnet policy diff {path}"]
+    # A file is validated the same way, and has no meta.json to record anything in. Its
+    # mode is the agent's business: it holds no secret.
+    loose = tmp_path / "policy.hujson"
+    loose.write_bytes(candidate)
+    loose.chmod(0o644)
+    env = envelope(cli("--json", "policy", "validate", str(loose)))
+    assert (env["exit"], env["data"]["kind"], env["data"]["recorded"]) == (0, "file", False)
+    assert live.requests("POST", VALIDATE)[-1].body == candidate
+
+
+def test_validate_failure_exits_8_with_want_got(cli, live, configured):
+    path = draft(cli)
+    edit(path)
+    live.answer = (200, {"X-Tailscale-Request-Id": "REQ-validate"},
+                   body("api", "validate-tests-failed"))
+    result = cli("--json", "policy", "validate", str(path))
+    assert result.returncode == 8, result.stderr
+    env = envelope(result)
+    assert (env["outcome"], env["error"]["code"], env["error"]["kind"]) == (
+        "negative", "POLICY_INVALID", "negative")
+    assert env["data"]["failures"] == [{"user": "user1@example.com", "target": "2.2.2.2:22",
+                                        "want": "Drop", "got": "Accept"}]
+    validated = meta_of(path)["validated"]
+    assert validated["verdict"] == "fail"
+    assert validated["messages"] == [
+        "test(s) failed", 'user1@example.com: address "2.2.2.2:22": want: Drop, got: Accept']
+    human = cli("policy", "validate", str(path))
+    assert human.returncode == 8
+    assert human.stdout.startswith("NEGATIVE: POLICY_INVALID: ")
+    assert "user1@example.com: 2.2.2.2:22  want Drop, got Accept" in human.stdout
+    # A candidate the server cannot parse is a 400, and a verdict on the draft too.
+    live.answer = (400, {"X-Tailscale-Request-Id": "REQ-validate"},
+                   {"message": "line 22, column 1: unexpected end of input"})
+    env = envelope(cli("--json", "policy", "validate", str(path)))
+    assert (env["exit"], env["error"]["code"], env["data"]["reason"]) == (8, "POLICY_INVALID",
+                                                                         "HTTP 400")
+    assert "line 22, column 1: unexpected end of input" in env["error"]["message"]
+    assert meta_of(path)["validated"]["messages"] == ["line 22, column 1: unexpected end of input"]
+
+
+def test_validate_warnings_exit_0_and_are_printed(cli, live, configured):
+    path = draft(cli)
+    edit(path)
+    live.answer = (200, {}, body("api", "validate-scim-warnings"))
+    result = cli("policy", "validate", str(path))
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.startswith("OK: PASS WITH WARNINGS: 1 warning")
+    assert ("tailnet: POLICY_WARNING: group:unknown@example.com: group is not syncing from SCIM "
+            "and will be ignored by rules in the policy file") in result.stderr
+    assert meta_of(path)["validated"]["verdict"] == "pass-with-warnings"
+    env = envelope(cli("--json", "policy", "validate", str(path)))
+    assert (env["exit"], env["data"]["verdict"]) == (0, "pass-with-warnings")
+    assert [w["code"] for w in env["warnings"]] == ["POLICY_WARNING"]
+
+
+def test_validate_refuses_an_array_file_without_any_request(cli, live, loopback, configured,
+                                                            tmp_path):
+    tests = tmp_path / "tests.hujson"
+    tests.write_text('// the tests I meant\n[{"src": "user1@example.com", '
+                     '"accept": ["example-host-1:22"]}]\n')
+    result = cli("--json", "policy", "validate", str(tests))
+    env = envelope(result)
+    assert (result.returncode, env["error"]["code"]) == (2, "VALIDATE_ARRAY_BODY")
+    assert "tailnet policy test" in env["error"]["message"]
+    assert loopback.requests == []
+    # The same for a draft whose candidate became an array; its record is left alone.
+    path = draft(cli)
+    (path / "candidate.hujson").write_bytes(tests.read_bytes())
+    before = len(loopback.requests)
+    result = cli("--json", "policy", "validate", str(path))
+    assert (result.returncode, envelope(result)["error"]["code"]) == (2, "VALIDATE_ARRAY_BODY")
+    assert len(loopback.requests) == before
+    assert meta_of(path)["validated"] is None
+
+
+def test_validate_and_diff_refuse_what_is_not_theirs_to_send_or_record(cli, live, loopback,
+                                                                      configured, tmp_path):
+    # A directory outside the drafts would get a meta.json written into it, perhaps in a
+    # repository; a file in the config directory would be sent to the API.
+    elsewhere = tmp_path / "repo" / "draft"
+    elsewhere.mkdir(parents=True)
+    for name in ("base.hujson", "candidate.hujson"):
+        (elsewhere / name).write_bytes(live.hujson)
+    (elsewhere / "meta.json").write_text(json.dumps({"v": 1}))
+    secret = configured.config_dir / "read.secret"
+    real = draft(cli)
+    (real / "meta.json").write_text("{}")
+    linked = draft(cli, "linked")
+    (linked / "candidate.hujson").unlink()
+    (linked / "candidate.hujson").symlink_to(secret)
+    before = len(loopback.requests)
+    cases = [("validate", elsewhere), ("diff", elsewhere), ("validate", secret),
+             ("validate", tmp_path / "missing.hujson"), ("diff", tmp_path / "missing"),
+             ("diff", real / "candidate.hujson"), ("validate", real), ("diff", real),
+             ("validate", linked), ("validate", configured.drafts_dir)]
+    for command, target in cases:
+        result = cli("--json", "policy", command, str(target))
+        assert (result.returncode, envelope(result)["error"]["code"]) == (2, "USAGE"), target
+        assert secret.read_text().strip() not in result.stdout + result.stderr
+    assert len(loopback.requests) == before
+    assert not (elsewhere / "meta.json").read_text().count("validated")
+
+
+def test_diff_is_ready_only_after_validate_and_with_an_unmoved_live_policy(cli, live, configured):
+    from tailnet import policy
+
+    path = draft(cli)
+    candidate = edit(path)
+    result = cli("--json", "policy", "diff", str(path))
+    env = envelope(result)
+    assert (result.returncode, env["error"]["code"]) == (8, "DRAFT_NOT_READY")
+    assert env["data"]["reasons"] == [policy.NOT_VALIDATED]
+    assert env["next"][0]["run"] == f"tailnet policy validate {path}"
+    assert cli("policy", "validate", str(path)).returncode == 0
+    result = cli("policy", "diff", str(path))
+    assert result.returncode == 0, result.stderr
+    lines = result.stdout.splitlines()
+    assert re.fullmatch(rf'READY: candidate sha256:{sha256(candidate)[:12]} validated PASS at '
+                        rf'{TIME}; live unchanged since draft \(ETag "e0b2816b418"\) '
+                        rf'\(as of {TIME}\)', lines[0])
+    assert "--- base.hujson" in lines and "+++ candidate.hujson" in lines
+    added = [line for line in lines if line.endswith(ADDED_TEST.rstrip("\n"))]
+    assert len(added) == 1 and re.match(r" {6}\s*\d+ \+ ", added[0])
+    assert ("MC applies it: https://console.tailscale.com/admin/acls/file → make the edits shown "
+            "above → Save.") in lines
+    assert "Saving re-runs the policy's tests; a failing test blocks the save." in lines
+    # Each diff fetched the live policy for the drift check, as HuJSON.
+    gets = live.requests("GET", ACL)
+    assert len(gets) == 3 and {g.header("accept") for g in gets} == {"application/hujson"}
+    env = envelope(cli("--json", "policy", "diff", str(path)))
+    data = env["data"]
+    assert (env["exit"], data["ready"], data["reasons"], data["changed"]) == (0, True, [], True)
+    assert data["candidate_sha256"] == sha256(candidate)
+    [step] = env["next"]
+    assert (step["who"], step["needs"]) == ("mc", "console")
+    # An edit after validate is not what was validated.
+    edit(path, "  // one more thought\n")
+    env = envelope(cli("--json", "policy", "diff", str(path)))
+    assert (env["exit"], env["data"]["reasons"]) == (8, [policy.CHANGED])
+
+
+def test_diff_reports_a_moved_etag_as_not_ready(cli, live, configured):
+    from tailnet import policy
+
+    path = draft(cli)
+    edit(path)
+    assert cli("policy", "validate", str(path)).returncode == 0
+    # MC saved in the console meanwhile: a new ETag and new bytes. Applying the draft now
+    # would undo MC's change, which the diff would show as the agent's own edit.
+    live.etag = '"f00d5eed"'
+    live.hujson += b"// MC's console edit\n"
+    result = cli("--json", "policy", "diff", str(path))
+    env = envelope(result)
+    assert (result.returncode, env["error"]["code"]) == (8, "DRAFT_NOT_READY")
+    assert env["data"]["reasons"] == [policy.MOVED]
+    assert env["error"]["message"] == policy.MOVED
+    assert (env["data"]["live_etag_raw"], env["data"]["base_etag_raw"]) == ('"f00d5eed"', ETAG)
+    assert env["next"][0]["run"] == "tailnet policy draft --name fix-ssh"
+    human = cli("policy", "diff", str(path))
+    assert human.stdout.startswith(f"NOT READY: {policy.MOVED} (as of ")
+
+
+def test_a_fresh_draft_is_ready_after_validate_with_nothing_for_mc_to_apply(cli, live, configured):
+    path = draft(cli)
+    assert cli("policy", "validate", str(path)).returncode == 0
+    result = cli("--json", "policy", "diff", str(path))
+    env = envelope(result)
+    assert (result.returncode, env["data"]["ready"], env["data"]["changed"]) == (0, True, False)
+    assert env["data"]["diff"] == "" and env["next"] == []

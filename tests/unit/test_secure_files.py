@@ -389,3 +389,23 @@ def test_the_apply_lock_never_follows_a_symlink(tmp_path):
         pass
     assert caught.value.code == "AUDIT_UNWRITABLE"
     assert target.read_bytes() == b"keep\n"
+
+
+def test_a_plain_read_takes_any_mode_but_never_a_symlink_a_fifo_or_too_much(tmp_path):
+    # A policy draft or a file the agent names holds no secret, so its mode is not checked:
+    # an editor may rewrite it with another one. Reading it must still be safe: nothing
+    # behind a symlink, nothing that blocks or never ends, nothing larger than the limit.
+    path = private_file(tmp_path, "policy.hujson", "{}", mode=0o644)
+    assert secure_files.read_regular(path, 2) == b"{}"
+    link = tmp_path / "link.hujson"
+    link.symlink_to(path)
+    fifo = tmp_path / "fifo.hujson"
+    os.mkfifo(fifo, 0o600)
+    for target, why in ((link, "it is a symlink"), (fifo, "it is not a regular file"),
+                        (tmp_path, "it is not a regular file"),
+                        (path, "it is 2 bytes, over the 1-byte limit")):
+        with pytest.raises(secure_files.Unreadable) as caught:
+            secure_files.read_regular(target, 1 if target == path else 10)
+        assert str(caught.value) == why
+    with pytest.raises(FileNotFoundError):
+        secure_files.read_regular(tmp_path / "missing.hujson", 10)

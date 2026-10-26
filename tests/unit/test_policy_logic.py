@@ -300,3 +300,42 @@ def test_sections_count_each_part_of_a_json_policy():
     # A part in a shape a policy file never has is unknown, not zero.
     assert policy.sections({"acls": {"not": "a list"}, "hosts": ["x"]})["acls"] is None
     assert policy.sections({"hosts": ["x"]})["hosts"] is None
+
+
+def test_meta_json_must_be_one_this_cli_wrote():
+    fresh = policy.new_meta("fix-ssh", ETAG, SHA_BASE, "2026-10-27T01:02:03Z", "REQ-acl")
+    for meta in (fresh, validated_meta(), validated_meta("pass-with-warnings"),
+                 policy.new_meta("x", None, SHA_BASE, "2026-10-27T01:02:03Z", None)):
+        assert policy.parse_meta(encoded(meta)) == meta
+    missing = {key: value for key, value in fresh.items() if key != "base_sha256"}
+    for raw in (b"not json", encoded([]), encoded({**fresh, "v": 2}), encoded({**fresh, "v": True}),
+                encoded(missing), encoded({**fresh, "base_sha256": "short"}),
+                encoded({**fresh, "base_etag_raw": 7}), encoded({**fresh, "name": None}),
+                encoded({**fresh, "validated": "yes"}),
+                encoded(validated_meta(sha="not a hash")), encoded(validated_meta("maybe"))):
+        with pytest.raises(ValueError):
+            policy.parse_meta(raw)
+
+
+def test_the_diff_numbers_each_line_by_base_and_candidate():
+    # difflib's unified diff (§14.4) with each line's number in base and in candidate, so MC
+    # can find it in the console's editor.
+    base = b"// MC's policy\n{\n  \"acls\": [],\n}\n"
+    candidate = b"// MC's policy\n{\n  \"grants\": [],\n  \"tests\": [],\n}\n"
+    text, numbered = policy.diff_lines(base, candidate)
+    assert text == ('--- base.hujson\n+++ candidate.hujson\n@@ -1,4 +1,5 @@\n'
+                    ' // MC\'s policy\n {\n-  "acls": [],\n+  "grants": [],\n'
+                    '+  "tests": [],\n }\n')
+    assert numbered == [
+        "--- base.hujson", "+++ candidate.hujson", "@@ -1,4 +1,5 @@",
+        "    1     1   // MC's policy",
+        "    2     2   {",
+        "    3       -   \"acls\": [],",
+        "          3 +   \"grants\": [],",
+        "          4 +   \"tests\": [],",
+        "    4     5   }",
+    ]
+    # A hunk that only adds lines numbers from where they land.
+    _, numbered = policy.diff_lines(b"", b"{}\n")
+    assert numbered[2:] == ["@@ -0,0 +1 @@", "          1 + {}"]
+    assert policy.diff_lines(base, base) == ("", [])
