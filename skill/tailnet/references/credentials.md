@@ -170,6 +170,10 @@ per turn and say what it proves.
 - `tailnet doctor` proposes it: one `self <nodeId>` line plus every device. MC deletes the lines for
   devices the CLI may tag, then runs doctor's single shell block over SSH.
 - Exactly one `self` line is required. Self is always protected from tag writes, listed or not.
+- An entry names a device as a command argument would: its nodeId or legacy id, its hostname,
+  MagicDNS name or first label (any case), or a Tailscale address (DESIGN A59). A nodeId survives
+  a rename. A line that names no device protects nothing; every tag plan then warns
+  `PROTECTED_LINE_UNMATCHED` by line number, and doctor's L6 says the same.
 - **Missing file**: every tag write is refused (`PROTECTED_UNANSWERED`); `disable-key-expiry` still
   works, because keeping hosts on the tailnet must not wait on this answer (DESIGN §11.4, D7).
 - Which devices to protect is still MC's open question MC5; the safe default protects every device.

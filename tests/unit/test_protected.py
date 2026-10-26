@@ -87,10 +87,36 @@ def test_entries_match_node_id_exactly_or_hostname_and_label_ignoring_case():
     assert listed.protects(OTHER) is None
     # A nodeId is compared exactly: another spelling is not that node.
     assert protected.parse("self nXyz123CNTRL\nNABC456CNTRL\n").protects(PI5) is None
-    # Never by substring, prefix or full name.
-    for entry in ("spec", "pi5.tail0000.ts.net", "nAbc456", "iphone"):
+    # Never by substring or prefix.
+    for entry in ("spec", "pi5.tail0000", "nAbc456", "iphone"):
         assert protected.parse(f"self nXyz123CNTRL\n{entry}\n").protects(PI5) is None, entry
         assert protected.parse(f"self nXyz123CNTRL\n{entry}\n").protects(PHONE) is None, entry
+
+
+def test_an_entry_protects_a_device_by_every_form_a_device_argument_names_it_by():
+    # §5.1's resolver takes a DEVICE by nodeId, legacy id, hostname, MagicDNS name, first label
+    # or Tailscale address. An entry MC writes in any of those forms names the same device, so
+    # the list never protects less than the CLI can target (A59).
+    pi5 = devices.normalise({"nodeId": "nAbc456CNTRL", "id": "1004", "hostname": "raspberrypi",
+                             "name": "pi5.tail0000.ts.net",
+                             "addresses": ["100.64.0.13", "fd7a:115c:a1e0::d"], "tags": []})
+    for entry in ("1004", "pi5.tail0000.ts.net", "PI5.tail0000.ts.net.", "100.64.0.13",
+                  "fd7a:115c:a1e0:0:0:0:0:d", "FD7A:115C:A1E0::D"):
+        assert devices.resolve(entry, [pi5, OTHER]) is pi5, entry
+        listed = protected.parse(f"self nXyz123CNTRL\n{entry}\n")
+        assert listed.protects(pi5) == f"listed as {entry}", entry
+        assert listed.protects(OTHER) is None, entry
+        assert listed.unmatched([pi5, OTHER]) == [], entry
+    # Another address, or one that is not a whole address, names nothing.
+    for entry in ("100.64.0.1", "100.64.0", "fd7a:115c:a1e0::"):
+        assert protected.parse(f"self nXyz123CNTRL\n{entry}\n").protects(pi5) is None, entry
+
+
+def test_unmatched_names_the_lines_that_match_no_device_never_their_text():
+    listed = protected.parse("self nXyz123CNTRL\n# a comment\nspec5\noldbox\n\nnAbc456CNTRL\n"
+                             "100.64.9.9\n")
+    assert listed.unmatched([FACTORY, SPEC5, PI5]) == [4, 7]
+    assert listed.unmatched([]) == [3, 4, 6, 7]
 
 
 def test_comments_and_blank_lines_are_ignored():

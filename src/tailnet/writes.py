@@ -264,7 +264,8 @@ def _run(attempt, names, changes):
     ctx = guard.Context(me=attempt.me, protected=attempt.listed,
                         gate_present=attempt.gate_present,
                         settings_path=str(posture.claude_settings), write=attempt.write,
-                        now=attempt.now, policy=policy, policy_error=policy_error)
+                        now=attempt.now, policy=policy, policy_error=policy_error,
+                        devices=tuple(found))
     if attempt.op == guard.TAG:
         plans = [guard.plan_tag(targets[0], *changes, ctx)]
     else:

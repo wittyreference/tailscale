@@ -438,6 +438,17 @@ def test_credentials_reference_records_mc_s_answer_and_keeps_the_consent_text():
     assert "MC chose **Two clients**" in record and "Do not ask again" in record
 
 
+def test_credentials_reference_names_every_form_a_protected_entry_takes():
+    # A59: an entry names a device in any form a DEVICE argument takes, and a line naming no
+    # device is warned of in every tag plan; MC hand-writes the file, so the reference says so.
+    text = reference_text("credentials.md")
+    start, end = section(text, "5. The protected file")
+    part = text[start:end]
+    for form in ("nodeId", "legacy id", "hostname", "MagicDNS name", "first label",
+                 "Tailscale address", "PROTECTED_LINE_UNMATCHED"):
+        assert form in part, form
+
+
 def test_every_reference_file_ends_with_its_dated_sources():
     # §19.3: every fact carries its source and date, so each file ends with what it rests on
     # and when that was read.

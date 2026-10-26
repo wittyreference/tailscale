@@ -482,6 +482,16 @@ def test_an_unanswered_protected_list_warns_and_explains_the_missing_proposal(cl
     assert "self is unknown" in found["L6"]["finding"]
 
 
+def test_l6_names_protected_lines_that_match_no_device_by_number(cli, tailnet, ready):
+    # An address or a MagicDNS name names a device as a DEVICE argument would, so it matches;
+    # a line naming nothing protects nothing and is reported by number, never quoted (A19).
+    write_protected(ready, SELF_LINE + "100.64.0.13\npi5.tail0000.ts.net\noldbox  # sold\n")
+    found = checks_of(envelope(cli("--json", "doctor")))
+    assert found["L6"]["status"] == "WARN"
+    assert found["L6"]["evidence"]["unmatched_lines"] == [4]
+    assert "line 4 " in found["L6"]["finding"] and "oldbox" not in json.dumps(found["L6"])
+
+
 def test_a_key_shaped_environment_value_is_named_not_shown(cli, tailnet, ready):
     value = "tskey-" + "client-" + "kEnv01CNTRL-" + "Q" * 26
     result = cli("--json", "doctor", env={"STRAY_TAILSCALE_KEY": value})

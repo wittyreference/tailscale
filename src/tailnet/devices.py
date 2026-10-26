@@ -116,6 +116,25 @@ class Device:
         """How messages name a device: hostname and nodeId, so a rename never hides which one."""
         return f"{self.hostname or '?'} ({self.node_id})"
 
+    def named_by(self, arg):
+        """Whether `arg` names this device by any reference form in §5.1, compared whole.
+
+        The DEVICE resolver and MC's protected list both ask this, so an entry protects
+        exactly what the same text as a DEVICE argument would target (amendment A59).
+        """
+        if arg in (self.node_id, self.id):
+            return True
+        folded = arg.lower()
+        if self.hostname and folded == self.hostname.lower():
+            return True
+        if self.name and folded.removesuffix(".") == self.name.lower().removesuffix("."):
+            return True
+        label = self.first_label()
+        if label and folded == label.lower():
+            return True
+        ip = _address(arg)
+        return ip is not None and any(_address(text) == ip for text in self.addresses)
+
     def owner(self):
         """Who owns it: its tags when it has any, else the user who registered it [spec 4496, 4728]."""
         if self.tags:
@@ -224,22 +243,6 @@ def annotate(device, *, is_self, protected):
     return replace(device, is_self=is_self, protected=protected)
 
 
-def _matches(arg, device):
-    """Whether `arg` names this device by any reference form in §5.1, compared whole."""
-    if arg in (device.node_id, device.id):
-        return True
-    folded = arg.lower()
-    if device.hostname and folded == device.hostname.lower():
-        return True
-    if device.name and folded.removesuffix(".") == device.name.lower().removesuffix("."):
-        return True
-    label = device.first_label()
-    if label and folded == label.lower():
-        return True
-    ip = _address(arg)
-    return ip is not None and any(_address(text) == ip for text in device.addresses)
-
-
 def resolve(arg, devices):
     """The one device `arg` names, by nodeId, id, hostname, name, first label or Tailscale IP.
 
@@ -248,7 +251,7 @@ def resolve(arg, devices):
     every candidate and picks none, and the way out is a nodeId (§5.1).
     """
     arg = arg.strip() if isinstance(arg, str) else ""
-    found = [device for device in devices if _matches(arg, device)] if arg else []
+    found = [device for device in devices if device.named_by(arg)] if arg else []
     if len(found) == 1:
         return found[0]
     listing = {"who": "agent", "run": "tailnet device list",

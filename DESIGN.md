@@ -978,6 +978,19 @@ writes all ended OK still exits 0; because C9 says a write that cannot be record
 refused line proves exactly that of every later write, and A26 (5) covers the write already out,
 not the next one, while §5.3's exit 3 promises that nothing was sent.
 
+**A59. (review, 2026-10-26) finding 14:** §11.4 matched a protected entry only by nodeId, hostname
+or first label, while §5.1's resolver takes a DEVICE by legacy id, MagicDNS name and Tailscale
+address as well, and only doctor's L6 reported an entry matching no device; so a line MC wrote as
+`pi5.tail0000.ts.net`, `100.64.0.13` or `1004` protected nothing, and the tag plan the agent
+relayed said "not on MC's protected list". An entry now matches by the resolver's own predicate
+(`Device.named_by`, which both call): every §5.1 form, a name with or without its trailing dot,
+an address in any spelling; and every tag plan warns `PROTECTED_LINE_UNMATCHED`, by line number
+(A19), when a line names no device in the fresh pre-read, as L6 does (`Protected.unmatched`);
+doctor's proposal header and `references/credentials.md` name the forms. A line naming nothing
+still does not refuse the write, which would need MC's decision since a stale line would then
+block every tag write; because matching more devices is the direction §11.4 calls safe, the
+list must protect whatever the same text targets, and L6 is not on the path of a write.
+
 ---
 
 ## 0. The design on one page

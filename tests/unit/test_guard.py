@@ -245,6 +245,25 @@ def test_a_confirm_for_a_renamed_device_is_refused():
     assert "--apply" not in refusal.next[0]["run"]
 
 
+def test_a_tag_plan_warns_of_protected_lines_that_match_no_device_by_number_only():
+    # A line for a device since renamed or removed, or a typo, protects nothing; the plan the
+    # agent relays says so rather than a bare "not on MC's protected list" (A59). The file
+    # sits behind a deny rule, so the warning names lines, never what they say (A19).
+    found = [device(name) for name in ("claude-factory", "spec5", "pi5", "albini")]
+    ctx = context(protected=listed("self nFactory1CNTRL\nspec5\noldbox\n100.64.9.9\n"),
+                  devices=tuple(found))
+    plan = guard.plan_tag(device("pi5"), ["tag:lab"], [], ctx)
+    [warning] = plan.warnings
+    assert warning["code"] == "PROTECTED_LINE_UNMATCHED"
+    assert "lines 3, 4" in warning["message"] and "oldbox" not in warning["message"]
+    assert check(plan, "PROTECTED_DEVICE")["result"] == "pass"
+    # Every line naming a device, or no inventory to judge by: nothing to say.
+    assert guard.plan_tag(device("pi5"), ["tag:lab"], [], context(devices=tuple(found))) \
+        .warnings == ()
+    assert guard.plan_tag(device("pi5"), ["tag:lab"], [], context(
+        protected=listed("self nFactory1CNTRL\noldbox\n"))).warnings == ()
+
+
 def test_every_tag_change_on_a_protected_device_is_refused():
     by_name = listed("self nFactory1CNTRL\nspec5\n")
     by_node_id = listed("self nFactory1CNTRL\nnSpec5x1CNTRL\n")

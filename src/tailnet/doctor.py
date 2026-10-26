@@ -325,6 +325,8 @@ def protected_proposal(devices, self_device, path, now):
         raise ValueError("self's nodeId is not plain letters and digits")
     lines = [
         "# MC's protected list. Written by MC, never by an agent. One entry per line.",
+        "# An entry names a device as a command would: nodeId, legacy id, hostname,",
+        "# MagicDNS name, first label or Tailscale address. A nodeId survives a rename.",
         f"# Proposed by `tailnet doctor` at {format_utc(now)} from the live device list:",
         "# every device is protected. Delete a device's line to let the CLI retag it;",
         "# the self line must stay, and self is always protected.",
@@ -920,8 +922,7 @@ class _Run:
                             "device")
         if self.inventory is not None:
             # Lines, never their text: the file sits behind a deny rule (amendment A19).
-            unmatched = [entry.line for entry in listed.entries
-                         if not any(entry.matches(device) for device in self.inventory)]
+            unmatched = listed.unmatched(self.inventory)
             evidence["unmatched_lines"] = unmatched
             if unmatched:
                 lines = ", ".join(str(n) for n in unmatched)

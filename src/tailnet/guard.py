@@ -78,8 +78,9 @@ class Context:
 
     `me` is the SelfNode, `protected` MC's parsed list (None while unanswered), `write` the
     write client's metadata (None when there is no write.json), `policy` the live policy as
-    JSON for tag writes (None with `policy_error` saying why it could not be read), and
-    `now` the time every expiry is judged at.
+    JSON for tag writes (None with `policy_error` saying why it could not be read), `now`
+    the time every expiry is judged at, and `devices` the fresh device list the protected
+    entries are judged against (None when the caller has none to give).
     """
 
     me: object
@@ -90,6 +91,7 @@ class Context:
     now: object
     policy: dict | None = None
     policy_error: str | None = None
+    devices: tuple | None = None
 
 
 @dataclass(frozen=True)
@@ -532,6 +534,27 @@ def _tag_consequences(device, current, new, user_owned, ctx):
     return tuple(lines)
 
 
+def _unmatched_warnings(ctx):
+    """PROTECTED_LINE_UNMATCHED: protected lines that name no device protect nothing.
+
+    C6 can only say a target is "not on MC's protected list"; when a line meant for it was
+    left behind by a rename or a typo, that would read as MC's choice. Doctor's L6 says the
+    same, but doctor is not on the path of a write. Lines by number only (A19).
+    """
+    if ctx.protected is None or ctx.devices is None:
+        return ()
+    lines = ctx.protected.unmatched(ctx.devices)
+    if not lines:
+        return ()
+    numbers = ", ".join(str(n) for n in lines)
+    which = (f"lines {numbers} match no device, so they protect" if len(lines) > 1
+             else f"line {numbers} matches no device, so it protects")
+    return ({"code": "PROTECTED_LINE_UNMATCHED",
+             "message": f"protected file {which} nothing (a rename, a removed device or a "
+                        "typo); MC fixes the file by hand",
+             "source": "DESIGN.md §11.4"},)
+
+
 def plan_tag(device, add, remove, ctx):
     """Plan a tag change on one device (§12.3, §12.4) from its fresh pre-read.
 
@@ -557,7 +580,8 @@ def plan_tag(device, add, remove, ctx):
     argv += ["--confirm", token, "--apply", "--reason", PLACEHOLDER]
     return Plan(op=TAG, cls=cls, target=device, before=_before(device), after={"tags": new},
                 checks=tuple(c.to_dict() for c in checks),
-                refusal=_first_refusal(checks, device), confirm_required=token, warnings=(),
+                refusal=_first_refusal(checks, device), confirm_required=token,
+                warnings=_unmatched_warnings(ctx),
                 consequences=_tag_consequences(device, current, new, user_owned, ctx),
                 noop=new == current, apply_argv=tuple(argv))
 

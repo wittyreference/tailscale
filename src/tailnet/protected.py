@@ -20,27 +20,26 @@ _SELF_WHY = "the self line: self is always protected"
 
 @dataclass(frozen=True)
 class Entry:
-    """One protected device as MC wrote it: a nodeId, hostname or first label, and the why."""
+    """One protected device as MC wrote it, in any form a DEVICE argument takes, and the why."""
 
     text: str
     why: str | None
     line: int
 
     def matches(self, device):
-        """Whether this entry names the device: its nodeId exactly, or its hostname or first
-        label in any case. Doctor uses it to report entries that name no device."""
-        folded = self.text.lower()
-        return (self.text == device.node_id
-                or bool(device.hostname and folded == device.hostname.lower())
-                or bool(device.first_label() and folded == device.first_label().lower()))
+        """Whether this entry names the device, by the DEVICE resolver's own rule (§5.1): its
+        nodeId or legacy id exactly, its hostname, MagicDNS name or first label in any case,
+        or a Tailscale address. An entry MC writes the way a command names the device must
+        protect it, and the rule lives on the device so the two cannot drift (A59)."""
+        return device.named_by(self.text)
 
 
 @dataclass(frozen=True)
 class Protected:
     """The parsed list: the one `self` nodeId and every entry, in file order.
 
-    Matching is deliberately broad (nodeId exactly, or hostname or first label in any case):
-    an entry that matches more devices protects more of them, which is the safe direction.
+    Matching is deliberately broad (every form a DEVICE argument takes): an entry that
+    matches more devices protects more of them, which is the safe direction.
     """
 
     self_node_id: str
@@ -50,6 +49,13 @@ class Protected:
     def self_only(self):
         """True when the file names nothing but self: tag writes are then open on every other device."""
         return not self.entries
+
+    def unmatched(self, devices):
+        """The line numbers of entries that name none of `devices`: a device renamed or
+        removed, or a typo. Such a line protects nothing, so doctor and every tag plan say
+        so, by number only, since the file is MC's and sits behind a deny rule (A19)."""
+        return [entry.line for entry in self.entries
+                if not any(entry.matches(device) for device in devices)]
 
     def protects(self, device):
         """Why this device is protected, or None. The self line's device is always protected."""
@@ -74,9 +80,9 @@ def _malformed(origin, line, problem):
 def parse(text, origin=FILE_NAME):
     """Parse the protected list (§11.4): blank lines and `#` comments are ignored.
 
-    `self <nodeId>` names this host, exactly once. Every other line is one entry, a nodeId,
-    hostname or first label, with an optional `# why`. A line naming two things is refused
-    rather than guessed at, and so is a missing or repeated self line.
+    `self <nodeId>` names this host, exactly once. Every other line is one entry, any form a
+    DEVICE argument takes (§5.1), with an optional `# why`. A line naming two things is
+    refused rather than guessed at, and so is a missing or repeated self line.
     """
     selves, entries = [], []
     for number, line in enumerate(text.splitlines(), start=1):
@@ -93,8 +99,9 @@ def parse(text, origin=FILE_NAME):
         elif len(words) == 1:
             entries.append(Entry(words[0], why, number))
         else:
-            raise _malformed(origin, number, "one device per line: its nodeId, hostname or "
-                                             "first label, then an optional # why")
+            raise _malformed(origin, number, "one device per line: its nodeId, legacy id, "
+                                             "hostname, MagicDNS name, first label or "
+                                             "Tailscale address, then an optional # why")
     if len(selves) != 1:
         raise _malformed(origin, None, f"it has {len(selves)} self lines; exactly one "
                                        "`self <nodeId>` line is required")

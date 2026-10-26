@@ -645,6 +645,26 @@ def test_a_tag_change_on_a_protected_device_exits_5(cli, net, armed):
     assert {r["outcome"] for r in writes_logged(armed)} == {"refused"}
 
 
+def test_a_device_listed_by_any_form_a_device_argument_takes_is_protected(cli, net, armed):
+    # MC may name a device in the protected file as the CLI's own resolver would: its MagicDNS
+    # name, a Tailscale address or its legacy id. Each protects it (A59); a line that names
+    # nothing is said in the plan, by number, since it protects nothing.
+    write_protected(armed, "self nFactory1CNTRL\npi5.tail0000.ts.net\n100.64.0.12\n1002\n"
+                           "oldbox    # sold\n")
+    for name, confirm in (("pi5", "retag:pi5"), ("nomad-b", "retag:nomad-b"),
+                          ("spec5", "retag:spec5")):
+        for apply in (False, True):
+            result = tag(cli, name, "--add", "tag:lab", apply=apply, confirm=confirm)
+            env = envelope(result)
+            assert (result.returncode, env["error"]["code"]) == (5, "PROTECTED_DEVICE"), name
+    assert net.writes() == [] and WRITE_CLIENT not in net.mints()
+    result = tag(cli, "albini", "--add", "tag:fleet")
+    assert result.returncode == 0, result.stderr
+    [unmatched] = [w for w in envelope(result)["warnings"]
+                   if w["code"] == "PROTECTED_LINE_UNMATCHED"]
+    assert "line 5 " in unmatched["message"] and "oldbox" not in result.stdout + result.stderr
+
+
 def test_a_400_on_a_tag_write_exits_7_and_explains_the_client_tag_rule(cli, net, armed):
     net.outcome("pi5", 400, lands=False)
     result = tag(cli, "pi5", "--add", "tag:lab", apply=True, confirm="retag:pi5")
