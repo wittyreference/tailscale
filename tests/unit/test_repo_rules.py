@@ -1,8 +1,12 @@
 # ABOUTME: Repository-wide rules from CLAUDE.md, checked as tests so breaking one fails `make test`.
-# ABOUTME: Covers the ABOUTME header on every code file; later items add the write-surface tripwires.
+# ABOUTME: Covers ABOUTME headers and the loopback-only suite; later items add the write tripwires.
 
+import socket
 import subprocess
 from pathlib import Path
+
+import netguard
+import pytest
 
 REPO = Path(__file__).resolve().parents[2]
 
@@ -53,3 +57,18 @@ def test_every_code_file_starts_with_two_aboutme_lines():
     assert Path(__file__).resolve() in code
     missing = [str(path.relative_to(REPO)) for path in code if not has_two_aboutme_lines(path)]
     assert missing == [], f"code files without two leading '# ABOUTME: ' lines: {missing}"
+
+
+def test_default_suite_never_leaves_loopback():
+    # tests/conftest.py installs netguard before any test runs, so it must be live here.
+    # 192.0.2.1 is TEST-NET-1 (RFC 5737): even a broken guard would send nothing real.
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.settimeout(0.5)
+        with pytest.raises(netguard.NetguardViolation, match="loopback"):
+            sock.connect(("192.0.2.1", 9))
+    with pytest.raises(netguard.NetguardViolation, match="tailscale"):
+        subprocess.run(["tailscale", "version"], check=False)
+    # Loopback itself still works: that is where the seam lives.
+    with socket.create_server(("127.0.0.1", 0)) as listener, \
+            socket.create_connection(listener.getsockname(), timeout=2):
+        pass

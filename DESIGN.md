@@ -100,6 +100,16 @@ placeholders (spec 25, 28, 5784, 6626), so the hook as written would block the p
 rule keeps that file scanned, where a path exemption would wave a real key pasted into it
 through, and a real key cannot be all `x`: its key ID is `k123456CNTRL`-shaped [spec 5780, 6623].
 
+**A6. (build, 2026-10-26)** §21.1 said netguard raises on a `socket.connect` off loopback and on
+running a `tailscale` executable; it was built to refuse as well a connect by host name (only
+literal loopback addresses pass), a `sendto`/`sendmsg` off loopback, a name lookup a resolver
+would answer over the network (anything but `localhost` and address literals, and a reverse
+lookup of any non-loopback literal), socket families other than IPv4, IPv6 and Unix, and
+`tailscale` anywhere in argv (`env tailscale`, `sh -c "… tailscale …"`) unless that word is a
+path to a directory; because each of these leaves the box, or runs the binary, without raising
+either event the spec named. The loopback seam skips `HTTPServer`'s reverse lookup of its own
+address for the same reason.
+
 ---
 
 ## 0. The design on one page
