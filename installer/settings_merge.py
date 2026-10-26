@@ -259,6 +259,15 @@ def _commit(path, current, new, now):
     return backup
 
 
+def _why(exc):
+    """One line saying why a write failed: a refusal's own message, without its CLI code."""
+    if isinstance(exc, errors.TailnetError):
+        return exc.message
+    if isinstance(exc, OSError) and exc.filename:
+        return f"{exc.filename}: {exc.strerror}"
+    return str(exc)
+
+
 def _count(lists):
     """How many rules two per-list lists hold together."""
     return sum(len(lists[key]) for key in LISTS)
@@ -286,7 +295,7 @@ def merge_file(path, rules, *, now, dry_run=False):
     try:
         backup = _commit(path, current, new, now)
     except (Unmergeable, errors.LocalError, OSError) as exc:
-        return Outcome("aborted", f"{exc}; {by_hand(rules)}", warnings=found)
+        return Outcome("aborted", f"{_why(exc)}; {by_hand(rules)}", warnings=found)
     saved = f" (backup {backup})" if backup else ""
     return Outcome("changed", f"added {_count(added)} rules to {path}{saved}", added=added,
                    backup=backup, diff=change, warnings=found)
@@ -319,6 +328,7 @@ def remove_file(path, recorded, *, now, dry_run=False):
     try:
         backup = _commit(path, current, new, now)
     except (Unmergeable, errors.LocalError, OSError) as exc:
-        return Outcome("aborted", f"{exc}; {by_hand(recorded, removing=True)}", not_found=not_found)
+        return Outcome("aborted", f"{_why(exc)}; {by_hand(recorded, removing=True)}",
+                       not_found=not_found)
     return Outcome("changed", f"removed {_count(removed)} rules from {path} (backup {backup})"
                    f"{note}", removed=removed, not_found=not_found, backup=backup, diff=change)

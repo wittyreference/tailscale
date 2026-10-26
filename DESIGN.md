@@ -660,6 +660,48 @@ would aim the clone, checkout or HEAD check at another repository, and a public 
 for a password has gone wrong with nobody at the prompt; and git asked about a folder walks up the
 tree, where a home directory kept in git would answer for it.
 
+**A38. (build, 2026-10-26)** §20.1-20.5 gave the installer's steps without saying whose home it
+installs into, what a run that cannot finish a step exits, what a file already at the launcher's
+path or a private directory of the wrong kind means, how `install.json`'s `added` is shaped and
+carried across runs, or how `claude mcp get`'s answer is read. It was built (1) installing into
+`$HOME` when it is absolute, else the password database's home, warning when the two differ, with
+the Claude directory `CLAUDE_CONFIG_DIR` made absolute as `gate.claude_dir` reads it, so the two
+settings rules take their absolute form whenever it is set; (2) with `install.py` refusing root as
+well as the wrapper, after parsing its options (never abbreviated; a bad one exits 2), running
+every step even when one stops, and exiting 1 when any step stopped, 0 otherwise; `DRY_RUN` set to
+anything but empty or `0` is a dry run; (3) with `added` holding booleans for `lib`, `launcher`,
+`spec`, `skill`, `upstream_copy`, `upstream_clone` and `mcp`, each kept true once a run set it,
+and `rules` as `{ask, deny}`, the union of every run's additions; the record adds `v`, `last_run`
+and `claude_dir`, keeps `installed_at` unless the run changed something, and a previous record
+that cannot be read stops the record step instead of being overwritten; (4) stopping the launcher
+step, file untouched, when `~/.local/bin/tailnet` is a symlink or a file whose second line is not
+the installer's own ABOUTME line, and when Python's resolved path holds whitespace; (5) leaving a
+private directory that is a symlink alone with a warning, stopping on one that is not a directory
+or belongs to another account, tightening by clearing group and other bits only, and giving every
+directory it creates an exact mode whatever the umask (0700 for the private ones and a new Claude
+directory, 0755 for the rest); (6) treating a `.tailnet-install` marker that is a symlink as no
+marker, and a foreign `skills/tailscale` as MC's choice: left alone, nothing cloned, the run still
+exiting 0, where a foreign `skills/tailnet` stops its step; (7) fetching only when the clone lacks
+the pin, with an explicit branch refspec, and stopping, never forcing a checkout, when a clone at
+the pin has local changes; (8) reading `claude mcp get` as present when it exits 0 with the URL in
+its output, registered elsewhere when it exits 0 without it, and absent otherwise (its output
+format is **[unverified]**), and printing MC's login command only when the server is registered;
+(9) checking the login PATH only once the launcher exists, comparing what `command -v tailnet`
+finds with the launcher itself; and (10) letting a dry run make the read-only git calls (the
+checkout's commit and status, the clone's HEAD and status) alongside `claude mcp get`. Because a
+temporary `HOME` must never send an install, E17's above all, into MC's real settings, and the
+rules must be spelled as status and doctor look for them; `python3 -I installer/install.py` skips
+the wrapper, an agent reads a non-zero exit where it would skim a STOPPED line, and the safe reading
+of an unclear `DRY_RUN` is the run that changes nothing; uninstall needs every rule ever added,
+not only the last run's, and a record rewritten from an unreadable one would forget them; another
+program named `tailnet`, or a link MC made, is not the installer's to replace; a directory the CLI
+keeps secrets in must never gain access, and a umask of 002 would leave the share directory
+group-writable, which `secure_files` then refuses for the record; a marker that is a link could
+claim any directory; `npx skills` and a hand clone are installs MC chose; a fetch from a bare URL
+brings only the remote HEAD, and a forced checkout would discard edits MC made; the CLI's output is
+not a documented interface; a dry run has no launcher to find; and a read changes nothing, which is
+all §20.6 forbids a dry run.
+
 ---
 
 ## 0. The design on one page

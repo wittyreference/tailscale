@@ -114,8 +114,13 @@ def clone(url, destination, environ):
 
 
 def fetch(url, clone_dir, environ):
-    """Fetch `url`'s branches and tags into an existing clone, for a pin it does not hold yet."""
-    _must(["-C", clone_dir, "fetch", "--quiet", "--tags", url], environ, f"fetch {url}",
+    """Fetch `url`'s branches and tags into an existing clone, for a pin it does not hold yet.
+
+    The refspec is spelled out because a fetch from a bare URL brings only the remote's
+    HEAD, and a pin on another branch would never arrive.
+    """
+    _must(["-C", clone_dir, "fetch", "--quiet", "--tags", url,
+           "+refs/heads/*:refs/remotes/origin/*"], environ, f"fetch {url}",
           timeout=NETWORK_TIMEOUT)
 
 
