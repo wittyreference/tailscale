@@ -949,6 +949,16 @@ answer questions about the API and the policy, and keep their 30 days; because a
 client that is no longer configured is a claim about the past, and A33 already accepts one console
 event as the price of a fresh measurement.
 
+**A56. (review, 2026-10-26) finding 19:** §16.4 and A1 fire `scope-set` when the read client's
+granted scope differs from the four, but the question was decided from the read token's scope; in
+single-client mode every read token is minted narrowed to the four, so whenever narrowing worked the
+question could never fire, and MC was never asked about a read client that can write. It was
+changed so that single-client mode always asks `scope-set`, its text naming the client's own grant
+(write.json's when both files name the same client, since `credentials set read` may have recorded
+the narrowed four, else read.json's) and saying only its read tokens are narrowed; because "granted
+scope" in A1 and §8 names the client's grant, and single-client mode means that grant can write,
+which is not the four MC chose (MC2, MC3).
+
 ---
 
 ## 0. The design on one page

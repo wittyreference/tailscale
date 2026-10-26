@@ -359,6 +359,27 @@ def test_doctor_emits_questions_in_priority_order(cli, tailnet, home):
     assert audit_records(home, "doctor.run")[-1]["questions"] == ids
 
 
+def test_single_client_mode_raises_the_scope_question_although_narrowing_works(cli, tailnet,
+                                                                              ready):
+    # The read client's grant is "all": its read tokens are minted narrowed to the four and
+    # granted them, so comparing the token's scope would never ask MC (A56).
+    write_role(ready, "read", granted_scope="all")
+    env = envelope(cli("--json", "doctor"))
+    found = checks_of(env)
+    assert "single-client" in found["L4"]["finding"]
+    assert found["S1"]["evidence"]["scope"] == READ_SCOPES
+    [question] = [q for q in env["data"]["questions"] if q["id"] == "scope-set"]
+    assert "holds all" in question["text"]
+    assert "scope-set" in audit_records(ready, "doctor.run")[-1]["questions"]
+    # The same client named in both files: read.json may hold the four it was narrowed to at
+    # `credentials set`, so the grant named is the write metadata's.
+    write_role(ready, "read")
+    write_role(ready, "write", client_id="kRead0001CNTRL", granted_scope="devices:core")
+    env = envelope(cli("--json", "doctor"))
+    [question] = [q for q in env["data"]["questions"] if q["id"] == "scope-set"]
+    assert "holds devices:core" in question["text"]
+
+
 def test_doctor_reports_mints_and_audit_events_caused(cli, tailnet, ready):
     env = envelope(cli("--json", "doctor"))
     assert env["exit"] == 0, env

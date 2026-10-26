@@ -4,6 +4,7 @@
 import hashlib
 import json
 import re
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -153,6 +154,18 @@ def test_questions_fire_only_when_they_apply():
     unmeasured = full_state(scope_known=False, protected_missing=False, fleet_expiry=(),
                             drops=())
     assert doctor.questions(unmeasured) == []
+
+
+def test_single_client_mode_asks_the_scope_question_whatever_the_narrowed_token_got():
+    # Single-client mode means the read client itself can write, which is not the four read
+    # scopes MC chose (A1, MC3), even when its read tokens are narrowed to exactly them (A56).
+    single = full_state(granted_scope=" ".join(READ_SCOPES), single_client=True,
+                        client_grant="all", protected_missing=False, fleet_expiry=(), drops=())
+    [question] = doctor.questions(single)
+    assert question.id == "scope-set" and question.safe_default == "Keep exactly these"
+    assert "holds all" in question.text and "narrowed" in question.text
+    # It holds even when no token was obtained: the mode is read from the local files.
+    assert [q.id for q in doctor.questions(replace(single, scope_known=False))] == ["scope-set"]
 
 
 def heredoc_body(block):

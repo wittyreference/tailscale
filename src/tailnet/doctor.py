@@ -179,6 +179,8 @@ class QuestionState:
     `fleet_expiry` holds (hostname, expires) for each tagged device with key expiry on,
     `drops` holds (identity, address, hostname) for each S7a drop. `write_client` is kept
     to show the write-client question is never asked, whatever it says (amendment A1).
+    `single_client` is the mode read from the local files, and `client_grant` the read
+    client's own grant then, which its narrowed read token never shows (A56).
     """
 
     granted_scope: str | None
@@ -187,6 +189,8 @@ class QuestionState:
     fleet_expiry: tuple
     drops: tuple
     write_client: bool
+    single_client: bool = False
+    client_grant: str | None = None
 
 
 def _scope_items(scope):
@@ -202,12 +206,17 @@ def _option(label, description):
 def _scope_question(state):
     """Priority 2: the read client's grant is not the four read scopes MC chose (A1, MC2)."""
     granted = state.granted_scope if state.granted_scope else "no scope at all"
+    if state.single_client:
+        holds = state.client_grant or "a grant that can write"
+        said = (f"The read client holds {holds} (single-client mode), so it can write; only its "
+                "read tokens are narrowed to these four.")
+    else:
+        said = f"Its token was granted {granted}."
     keep = "Keep exactly these"
     return Question(
         "scope-set", 2,
         "Confirm the read client's scopes: Devices Core Read, Policy file Read, Device posture "
-        "attributes Read (required by Policy file Read, TC L94), DNS Read. Its token was granted "
-        f"{granted}.",
+        f"attributes Read (required by Policy file Read, TC L94), DNS Read. {said}",
         (_option(keep, "these four are the set you chose; adjust the client in the console "
                        "until it is granted exactly them"),
          _option("Change them in the console", "you want a different set; doctor and status "
@@ -270,10 +279,13 @@ def questions(state):
 
     Pure. Question 1, write-client consent, is never asked: MC answered it on 2026-10-26
     (amendment A1). The scope question compares the grant as a set, so order and
-    separators do not matter, and asks nothing when the grant was never measured.
+    separators do not matter, and asks nothing when the grant was never measured. In
+    single-client mode it is always asked: the read client can write, which is not the four
+    MC chose, however its narrowed tokens come back (A56).
     """
     asked = []
-    if state.scope_known and _scope_items(state.granted_scope) != set(READ_SCOPES):
+    differs = state.scope_known and _scope_items(state.granted_scope) != set(READ_SCOPES)
+    if state.single_client or differs:
         asked.append(_scope_question(state))
     if state.protected_missing:
         asked.append(_protected_question())
@@ -1451,6 +1463,14 @@ class _Run:
         """Tokens issued in this run: each one console event (§16.4)."""
         return (self.session.read_token.mints if self.session else 0) + self.extra_mints
 
+    def client_grant(self):
+        """The read client's own grant, un-narrowed: when write.json names the same client,
+        its grant, since `credentials set read` may have recorded the narrowed four (A56)."""
+        meta, cred = self.write_meta, self.cred
+        if meta is not None and cred is not None and meta.client_id == cred.client_id:
+            return meta.granted_scope or cred.granted_scope
+        return cred.granted_scope if cred is not None else None
+
     def question_state(self):
         """What the questions are decided from (§16.4)."""
         return QuestionState(
@@ -1458,7 +1478,8 @@ class _Run:
             scope_known=self.token is not None,
             protected_missing=self.protected_state == "unanswered",
             fleet_expiry=tuple((d.hostname or d.node_id, d.expires) for d in self.fleet),
-            drops=tuple(self.drops), write_client=self.write_meta is not None)
+            drops=tuple(self.drops), write_client=self.write_meta is not None,
+            single_client=self.mode == "single-client", client_grant=self.client_grant())
 
 
 def _line(check):
