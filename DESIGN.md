@@ -991,6 +991,18 @@ still does not refuse the write, which would need MC's decision since a stale li
 block every tag write; because matching more devices is the direction §11.4 calls safe, the
 list must protect whatever the same text targets, and L6 is not on the path of a write.
 
+**A60. (review, 2026-10-26) finding 4:** §20.4 step 4 and A36 (2) back up an existing settings
+file 0600 before the write, and the backup went through `secure_files.write_private_atomic`, which
+also applies §8.2 item 6 and refuses a directory group or other can write; Claude Code creates
+`~/.claude` as 0777 less the umask, so 0775 under the umask 002 stock Ubuntu gives a user with a
+private group, and once Claude Code had written `settings.json` the settings step (and uninstall's)
+STOPPED, the gate rule never landed, and every `--apply` was refused. The backup is now created in
+place with `O_EXCL | O_NOFOLLOW`, fchmod 0600 and synced, with no check on the directory's mode;
+because nothing in §20 asks for that refusal, the same directory already received a new
+`settings.json` without one, `gate` reads it whatever its mode, and `O_EXCL` keeps A36's rule that
+an earlier backup is never overwritten. §8.2's directory rule still holds for the CLI's own private
+directories.
+
 ---
 
 ## 0. The design on one page

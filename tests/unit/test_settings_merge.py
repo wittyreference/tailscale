@@ -161,9 +161,17 @@ def test_a_backup_precedes_any_change(tmp_path, syscalls):
     assert (tmp_path / BACKUP).stat().st_mode & 0o777 == 0o600
     # The settings file keeps the mode it had.
     assert path.stat().st_mode & 0o777 == 0o644
-    renames = [os.path.basename(os.fsdecode(args[1])) for event, args in events
-               if event == "os.rename"]
-    assert renames == [BACKUP, "settings.json"]
+    # The backup is created exclusively under its own name, so it can never replace an
+    # earlier one, and before the new settings are renamed into place.
+    order = [("create", os.path.basename(os.fsdecode(args[0]))) if event == "open"
+             else ("rename", os.path.basename(os.fsdecode(args[1]))) for event, args in events
+             if event == "os.rename" or (event == "open" and args[2] & os.O_CREAT)]
+    assert ("create", BACKUP) in order
+    assert [step for step in order if BACKUP in step[1] or step[0] == "rename"] == [
+        ("create", BACKUP), ("rename", "settings.json")]
+    excl = [args[2] for event, args in events if event == "open"
+            and os.path.basename(os.fsdecode(args[0])) == BACKUP]
+    assert excl and all(flags & os.O_EXCL for flags in excl)
     # The settings file itself was never opened for writing: only its temp file was, and
     # that was renamed over it once the backup was in place.
     writes = [args for event, args in events if event == "open"
@@ -175,6 +183,30 @@ def test_a_backup_precedes_any_change(tmp_path, syscalls):
     settings_merge.merge_file(path, RULES, now=NOW)
     assert backups(tmp_path) == [BACKUP, BACKUP + "-1"]
     assert (tmp_path / BACKUP).read_bytes() == original
+
+
+@pytest.mark.parametrize("step", ["merge", "remove"])
+def test_a_group_writable_claude_directory_still_takes_its_0600_backup(tmp_path, step):
+    # Claude Code creates ~/.claude as 0777 less the umask, so 0775 under the umask 002 that
+    # stock Ubuntu gives a user with a private group, and it writes settings.json there for
+    # /model and /config. The credential-directory rule is not this directory's: refusing it
+    # stopped the step, and with no gate rule every --apply was refused.
+    claude = tmp_path / "claude"
+    claude.mkdir()
+    claude.chmod(0o775)
+    path = write(claude / "settings.json", {"model": "opus", "permissions": {
+        "ask": list(RULES["ask"]), "deny": list(RULES["deny"])} if step == "remove" else {}},
+        mode=0o644)
+    original = path.read_bytes()
+    if step == "merge":
+        outcome = settings_merge.merge_file(path, RULES, now=NOW)
+    else:
+        outcome = settings_merge.remove_file(path, RULES, now=NOW)
+    assert outcome.status == "changed", outcome.message
+    assert (claude / BACKUP).read_bytes() == original
+    assert (claude / BACKUP).stat().st_mode & 0o777 == 0o600
+    assert path.stat().st_mode & 0o777 == 0o644 and claude.stat().st_mode & 0o777 == 0o775
+    assert gate.missing_rules(path) == ([] if step == "merge" else RULES["ask"] + RULES["deny"])
 
 
 def test_a_write_that_does_not_read_back_is_restored_from_the_backup(tmp_path):

@@ -195,6 +195,30 @@ def _write_atomic(path, data, mode):
     _fsync_directory(path.parent)
 
 
+def _write_backup(path, data):
+    """Create the backup at `path`, which must not exist yet, as a synced 0600 file.
+
+    O_EXCL means an earlier backup is never overwritten (A36). The settings directory is
+    not held to the credential-directory rule (§8.2 item 6): Claude Code creates ~/.claude
+    as 0777 less the umask, so 0775 under the umask 002 stock Ubuntu gives a user with a
+    private group, and refusing it would leave the gate rule out of MC's settings.
+    """
+    fd = os.open(path, _TEMP_FLAGS, 0o600)
+    try:
+        # The create mode passes through the umask; fchmod sets exactly 0600.
+        os.fchmod(fd, 0o600)
+        view = memoryview(data)
+        while view:
+            view = view[os.write(fd, view):]
+        os.fsync(fd)
+    except BaseException:
+        os.close(fd)
+        path.unlink(missing_ok=True)
+        raise
+    os.close(fd)
+    _fsync_directory(path.parent)
+
+
 def replace_checked(path, data, mode, original):
     """Write `data` over `path`, then read it back as JSON; undo the write if it does not parse.
 
@@ -251,7 +275,7 @@ def _commit(path, current, new, now):
     backup = None
     if current.raw is not None:
         backup = backup_path(path, now)
-        secure_files.write_private_atomic(backup, current.raw)
+        _write_backup(backup, current.raw)
     else:
         path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     mode = current.mode if current.mode is not None else 0o600
