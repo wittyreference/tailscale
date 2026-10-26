@@ -127,6 +127,15 @@ object (`ok` stays false and `outcome` stays `negative`), and with `INTERNAL`, t
 exit 1's only code; because agents branch on codes, and a negative answer whose code had nowhere
 to go would drop the reason it was negative.
 
+**A9. (build, 2026-10-26)** §21.1 said netguard allows a connect whose address is loopback; it
+was built to refuse a loopback connect to the port of any proxy named in a `*_proxy` environment
+variable (either case) that listens on loopback; because a proxy on 127.0.0.1 forwards what it is
+sent off the box, so reaching it leaves loopback in all but address, and the build machine has
+exactly that (`HTTPS_PROXY=http://127.0.0.1:<port>`, observed 2026-10-26). Production posture
+honours environment proxies by design (§7.1), so without this an in-process test that reached
+production posture would go out through the proxy unseen. Integration CLI processes run with a
+minimal environment (§21.1) and are unaffected.
+
 ---
 
 ## 0. The design on one page

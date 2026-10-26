@@ -6,12 +6,14 @@ import os
 import re
 import socket
 import sys
+from urllib.parse import urlsplit
 
 # A word "tailscale" inside a shell command line: preceded by a separator or a path slash,
 # followed by a separator. A trailing "/" means a directory of that name, which is allowed.
 _SHELL_WORD = re.compile(r"(?:^|[\s;&|()`'\"/=])tailscale(?=$|[\s;&|()`'\"])")
 _SHELLS = {"sh", "bash", "dash", "zsh", "ksh"}
 _BINARY = "tailscale"
+_PROXY_DEFAULT_PORTS = {"http": 80, "https": 443}
 
 
 class NetguardViolation(RuntimeError):
@@ -34,10 +36,42 @@ def _loopback_ip(text):
     return address.is_loopback
 
 
-def address_violation(family, address, verb="connect to"):
+def _environment_proxies():
+    """Every proxy URL in the environment, in either case.
+
+    urllib prefers the lowercase spelling, but other tools honour the uppercase one, so
+    both count: any of them is a way off the box.
+    """
+    return [value for name, value in os.environ.items()
+            if value and name.lower().endswith("_proxy") and name.lower() != "no_proxy"]
+
+
+def _loopback_proxy_ports(proxies):
+    """The ports of every proxy URL in `proxies` that listens on loopback.
+
+    Such a proxy forwards what it is sent off the box, so a connect to its port leaves
+    loopback in all but address. Ports alone are compared: a proxy bound to every
+    address answers on all of 127/8.
+    """
+    ports = set()
+    for url in proxies:
+        parts = urlsplit(url if "://" in url else "http://" + url)
+        try:
+            # A URL without a port uses its scheme's: 80, 443, or SOCKS's registered 1080.
+            port = parts.port or _PROXY_DEFAULT_PORTS.get(parts.scheme, 1080)
+        except ValueError:
+            continue
+        if parts.hostname == "localhost" or _loopback_ip(parts.hostname or ""):
+            ports.add(port)
+    return ports
+
+
+def address_violation(family, address, verb="connect to", proxies=None):
     """Judge one destination address for a socket family; None means it stays on this machine.
 
     Takes the family rather than a socket so the rule can be tested on a host without IPv6.
+    `proxies` (proxy URLs) defaults to the environment's as it is at the moment of the call,
+    since a test may set them.
     """
     if family == socket.AF_UNIX:
         return None
@@ -52,6 +86,10 @@ def address_violation(family, address, verb="connect to"):
         return f"netguard: refused to {verb} {host!r} by name: tests use literal loopback addresses"
     if not verdict:
         return f"netguard: refused to {verb} {host}: tests never leave loopback"
+    proxies = _environment_proxies() if proxies is None else proxies
+    if address[1] in _loopback_proxy_ports(proxies):
+        return (f"netguard: refused to {verb} {host}:{address[1]}, a proxy named in the "
+                "environment: through it, traffic leaves loopback")
     return None
 
 

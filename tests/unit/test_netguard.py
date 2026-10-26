@@ -110,3 +110,25 @@ def test_other_programs_and_a_directory_named_tailscale_are_allowed(tmp_path):
 
 def test_events_netguard_does_not_watch_pass():
     assert netguard.violation("open", ("/etc/hosts", "r", 0)) is None
+
+
+@pytest.mark.parametrize("proxy", ["http://127.0.0.1:42185", "http://user:pw@localhost:42185/",
+                                   "socks5://[::1]:42185"])
+def test_a_connect_to_a_loopback_proxy_is_refused(proxy):
+    # A proxy listening on loopback forwards whatever it is sent off the box, so reaching it
+    # is leaving loopback in all but address.
+    proxies = [proxy]
+    family = socket.AF_INET6 if "[" in proxy else socket.AF_INET
+    host = "::1" if "[" in proxy else "127.0.0.1"
+    assert "proxy" in netguard.address_violation(family, (host, 42185), proxies=proxies)
+    assert netguard.address_violation(family, (host, 42186), proxies=proxies) is None
+
+
+def test_the_proxies_come_from_the_environment_at_connect_time(monkeypatch):
+    with socket.create_server(("127.0.0.1", 0)) as listener:
+        port = listener.getsockname()[1]
+        monkeypatch.setenv("HTTPS_PROXY", f"http://127.0.0.1:{port}")
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+            sock.settimeout(1)
+            with pytest.raises(netguard.NetguardViolation, match="proxy"):
+                sock.connect(("127.0.0.1", port))
