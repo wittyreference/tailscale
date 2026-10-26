@@ -204,6 +204,21 @@ the API never received a whole request, while one after it may have landed, as m
 reply was too large to read; and a freshly minted token that is refused is §5.3's "token
 rejected after re-minting" with nothing left to re-mint.
 
+**A15. (build, 2026-10-26)** §6 gives `tokens.read_token() -> str` and `mint(cred, *, scope=None)`,
+§9.1 says every mint appends a `token.mint` line, and §9.3 says an unsafe cache is unlinked "never
+read" with a warning naming its `expires_at`; it was built as `mint(posture, transport, cred, *,
+scope=None)` and a `tokens.ReadToken(posture, transport)` source, which the transport asks for
+`bearer()` and, after a 401 on a read, for `renew()` once, re-minting only a token that came from
+the cache. Every mint attempt leaves its line, failures included (`http_status` says which); a
+line that cannot be written stops a write-role mint (`AUDIT_UNWRITABLE`) and only warns for a
+read. The unsafe cache's expiry is its mtime plus the token's fixed hour, and a grant that cannot
+be cached also removes any older cache; because a function returning a string cannot tell the
+transport that its token came from the cache, the only case §9.3 re-mints; §13.3's `http_status`
+field only means something if failed attempts are recorded; a write whose token mint cannot be
+recorded must not be sent (C9), while a read changes nothing and the console keeps its own record
+of the mint (L5); a file that is never read cannot supply its `expires_at`; and a token on disk
+that nothing will use is exposure with no benefit.
+
 ---
 
 ## 0. The design on one page

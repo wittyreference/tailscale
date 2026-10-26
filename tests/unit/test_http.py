@@ -9,9 +9,10 @@ import time
 import urllib.request
 
 import pytest
+from credfiles import access_token, token_reply, write_cache, write_role
 
 import tailnet
-from tailnet import errors, http
+from tailnet import errors, http, tokens
 from tailnet.output import Envelope
 from tailnet.posture import Posture
 
@@ -295,3 +296,44 @@ def test_production_verifies_tls_and_honours_environment_proxies(tmp_path, monke
     assert tls._context.check_hostname is True
     [proxy] = [h for h in handlers if isinstance(h, urllib.request.ProxyHandler)]
     assert proxy.proxies["https"] == "http://proxy.invalid:3128"
+
+
+def test_a_401_on_a_cached_token_remints_once_and_retries_once(loopback, transport, tmp_path):
+    posture = posture_for(loopback.base_url, tmp_path)
+    write_role(posture, "read")
+    write_cache(posture, access_token("cached01"), expires_in=3000)
+    # A cached token can be dead before its hour is up: the client was revoked or replaced.
+    loopback.route("GET", API + "/tailnet/-/devices", (401, {}, {"message": "API token invalid"}),
+                   (200, {}, {"devices": []}))
+    loopback.route("POST", API + "/oauth/token", token_reply(access_token("fresh002")))
+    assert get(transport, token=tokens.ReadToken(posture, transport)).status == 200
+    first, mint, retry = loopback.requests
+    assert first.header("authorization") == f"Bearer {access_token('cached01')}"
+    assert (mint.method, mint.path) == ("POST", API + "/oauth/token")
+    assert retry.header("authorization") == f"Bearer {access_token('fresh002')}"
+    cache = (posture.config_dir / "read-token.json").read_text()
+    assert access_token("fresh002") in cache and access_token("cached01") not in cache
+
+
+def test_a_second_401_after_reminting_is_token_rejected_without_looping(loopback, transport,
+                                                                        tmp_path):
+    posture = posture_for(loopback.base_url, tmp_path)
+    write_role(posture, "read")
+    write_cache(posture, access_token("cached03"), expires_in=3000)
+    loopback.route("GET", API + "/tailnet/-/devices", (401, {}, {"message": "API token invalid"}),
+                   (401, {}, {"message": "API token invalid"}))
+    loopback.route("POST", API + "/oauth/token", token_reply(access_token("fresh004")))
+    exc = failure(get, transport, token=tokens.ReadToken(posture, transport))
+    assert (exc.exit, exc.code) == (3, "TOKEN_REJECTED")
+    assert [r.method for r in loopback.requests] == ["GET", "POST", "GET"]
+
+
+def test_a_401_on_a_token_minted_in_this_command_is_not_reminted(loopback, transport, tmp_path):
+    posture = posture_for(loopback.base_url, tmp_path)
+    write_role(posture, "read")
+    loopback.route("GET", API + "/tailnet/-/devices", (401, {}, {"message": "API token invalid"}))
+    loopback.route("POST", API + "/oauth/token", token_reply(access_token("fresh005")))
+    exc = failure(get, transport, token=tokens.ReadToken(posture, transport))
+    assert (exc.exit, exc.code) == (3, "TOKEN_REJECTED")
+    # Minting again would get the same answer from the same client: no loop.
+    assert [r.method for r in loopback.requests] == ["POST", "GET"]

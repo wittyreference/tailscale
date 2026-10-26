@@ -245,24 +245,36 @@ class Transport:
         """Send one request (plus, for a read, at most one retry) and return its Response.
 
         `idempotent` has no default: every caller says whether this is a read, which may be
-        retried, or a write, which never is. `needs_scope` names the OAuth scope the call
-        needs, for a 403's message. `expect` lists statuses the caller treats as an answer
-        rather than an error, such as a 400 from /acl/validate.
+        retried, or a write, which never is. `token` is a bearer string, or a source with
+        bearer() and renew() whose token may be renewed once after a 401 on a read.
+        `needs_scope` names the OAuth scope the call needs, for a 403's message. `expect`
+        lists statuses the caller treats as an answer rather than an error, such as a 400
+        from /acl/validate.
         """
         where = _display(method, path, query)
         url = self.base + path + (f"?{urlencode(query, doseq=True)}" if query else "")
-        send = (method, url, where, token, accept, content_type, body)
-        response = self._send(*send)
+        # A token source (tokens.ReadToken) is asked for its value only now, so nothing is
+        # minted for a request that is never made.
+        renewable = token is not None and not isinstance(token, str)
+        bearer = token.bearer() if renewable else token
+        send = (method, url, where, accept, content_type, body)
+        response = self._send(*send, bearer)
         if not idempotent:
             return response
         if response.status == 429:
             self._sleep(retry_delay(response.headers.get("retry-after")))
-            response = self._send(*send)
+            response = self._send(*send, bearer)
+        if response.status == 401 and renewable:
+            # §9.3: a cached token may be dead before its hour is up. Its source re-mints at
+            # most once, and only for a cached token; the read is retried once with it.
+            fresh = token.renew()
+            if fresh is not None:
+                response = self._send(*send, fresh)
         if 200 <= response.status < 300 or response.status in expect:
             return response
         raise _status_error(response, needs_scope)
 
-    def _send(self, method, url, where, token, accept, content_type, body):
+    def _send(self, method, url, where, accept, content_type, body, token):
         """Make exactly one HTTP exchange; return its Response whatever the status."""
         request = urllib.request.Request(url, data=body, method=method)
         request.add_header("User-Agent", USER_AGENT)
