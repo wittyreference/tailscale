@@ -3,6 +3,8 @@
 
 import ast
 import hashlib
+import json
+import re
 import socket
 import subprocess
 from pathlib import Path
@@ -85,6 +87,30 @@ def test_pinned_spec_matches_sha256sums():
     assert [name.lstrip("*") for _, name in pins] == ["tailscale-openapi.yaml"]
     for digest, name in pins:
         assert hashlib.sha256((SPEC / name.lstrip("*")).read_bytes()).hexdigest() == digest
+
+
+FIXTURES = REPO / "tests" / "fixtures"
+
+
+def test_every_api_fixture_names_its_spec_source():
+    # A fixture is only evidence if it says where it came from: an api/ body cites the spec
+    # lines it copies, a scenario/ body says it is synthetic, and the README maps them all.
+    readme = (FIXTURES / "README.md").read_text(encoding="utf-8")
+    files = sorted(path for path in FIXTURES.rglob("*") if path.is_file()
+                   and path.name != "README.md")
+    assert any(path.parent.name == "api" for path in files)
+    for path in files:
+        relative = path.relative_to(FIXTURES).as_posix()
+        assert f"`{relative}`" in readme, f"{relative} is not mapped in tests/fixtures/README.md"
+        if path.suffix != ".json":
+            continue
+        doc = json.loads(path.read_text(encoding="utf-8"))
+        source = doc.get("_source") if isinstance(doc, dict) else None
+        assert isinstance(source, str), f"{relative} has no _source"
+        if path.parent.name == "api":
+            assert re.search(r"\bspec \d+", source), f"{relative} cites no spec line"
+        else:
+            assert source.startswith("synthetic"), f"{relative} does not say it is synthetic"
 
 
 # HTTP methods that change something. GET is the only other method the CLI uses.

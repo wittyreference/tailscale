@@ -6,7 +6,7 @@ import os
 import sys
 import traceback
 
-from tailnet import errors
+from tailnet import devices, errors
 from tailnet.output import Envelope, emit
 from tailnet.posture import API_PATH, Posture
 from tailnet.redact import install_excepthook, redact
@@ -192,6 +192,7 @@ def _not_built(posture, args):
 
 # Each command's handler takes the posture and the parsed arguments and returns an Envelope.
 HANDLERS = dict.fromkeys(_BUILT_BY, _not_built)
+HANDLERS["device list"] = devices.run_list
 
 
 def _wants_json(argv):

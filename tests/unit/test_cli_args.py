@@ -169,17 +169,20 @@ def test_no_flag_accepts_a_secret_a_base_url_a_tailnet_or_force():
 
 
 def test_json_is_accepted_before_and_after_the_subcommand(capsys):
+    # The test home holds no read credential, so the command stops at exit 3 before any
+    # request; what matters here is that every placement gives one envelope.
     for argv in (["--json", "device", "list"], ["device", "--json", "list"],
                  ["device", "list", "--json"]):
         code, out, _ = run(capsys, *argv)
         env = json.loads(out)
-        assert (code, env["command"], env["schema"]) == (1, "device list", "tailnet.v1"), argv
+        assert (code, env["command"], env["schema"]) == (3, "device list", "tailnet.v1"), argv
+        assert env["error"]["code"] == "CREDENTIAL_MISSING"
         # The parsed value agrees: a sub-parser's default never overwrites an earlier --json.
         assert cli.build_parser().parse_args(argv).json is True, argv
     # Without it, the human view: a verdict line ending with its time.
     code, out, _ = run(capsys, "device", "list")
-    assert code == 1
-    assert out.startswith("INTERNAL: ") and "(as of " in out
+    assert code == 3
+    assert out.startswith("LOCAL: CREDENTIAL_MISSING: ") and "(as of " in out
 
 
 def test_a_usage_error_with_json_is_still_exactly_one_envelope(capsys):

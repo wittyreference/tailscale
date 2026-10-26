@@ -247,6 +247,21 @@ whatever surrounds it; argparse's own error path prints usage and exits before a
 exists; a refused override has decided neither posture and must not be reported as either; and
 the excepthook alone cannot keep the one-envelope rule.
 
+**A18. (build, 2026-10-26)** §11.2 listed the normalised Device's fields, gave `last_seen_kind`
+as `"online"|"never"|"at"` and the owner as `{kind, value}`, and left unsaid what a malformed
+device does; it was built (1) with `addresses`, every Tailscale address, beside `ipv4` and
+`ipv6`; (2) with `online` and `last_seen_kind` both `null` when `connectedToControl` is absent;
+(3) with a tagged owner's `value` the tags joined by commas; (4) refusing as `API_BAD_RESPONSE` a
+device whose `nodeId` is missing or not a string, or whose `addresses` or `tags` is not a list of
+strings, while display fields are read leniently; (5) with `request_ids` holding the device
+list's request ID, the mint's being in its `token.mint` line; and (6) with `self` and `protected`
+`null` until self detection and the protected file are wired in (§29 item 16); because self is
+joined on every address and a write's audit target records them all (§11.3, §13.3); a missing
+`lastSeen` beside a missing `connectedToControl` says nothing, and reading it as "never" is the
+inference §11.2 forbids; a string keeps `owner.value` one type; a tag list of the wrong shape
+would make a tagged device look user-owned to the guard; the envelope reports the calls that
+produced its data; and the list never guesses self or protection.
+
 ---
 
 ## 0. The design on one page

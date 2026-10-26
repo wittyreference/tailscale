@@ -7,6 +7,8 @@ from pathlib import Path
 
 import pytest
 
+from tailnet.posture import Posture
+
 TESTS = Path(__file__).resolve().parents[1]
 RUN_CLI = TESTS / "run_cli.py"
 
@@ -28,14 +30,26 @@ class Cli:
             "LANG": "C.UTF-8",
         }
 
-    def __call__(self, *args, env=None, timeout=60):
-        """Run one command; return the CompletedProcess with text stdout and stderr."""
+    def __call__(self, *args, env=None, unset=(), timeout=60):
+        """Run one command; return the CompletedProcess with text stdout and stderr.
+
+        `env` adds or replaces variables and `unset` removes them, so a test can run the
+        process with an override missing as well as with one changed.
+        """
+        environ = {name: value for name, value in {**self.env, **(env or {})}.items()
+                   if name not in unset}
         return subprocess.run([sys.executable, "-I", str(RUN_CLI), *args], capture_output=True,
-                              text=True, env={**self.env, **(env or {})}, timeout=timeout,
-                              check=False)
+                              text=True, env=environ, timeout=timeout, check=False)
 
 
 @pytest.fixture
 def cli(loopback, tmp_path):
     """The CLI as a process, in test posture at this test's loopback seam."""
     return Cli(loopback.base_url, tmp_path)
+
+
+@pytest.fixture
+def home(cli, tmp_path):
+    """The posture the CLI process will decide, built here so a test can lay out its files."""
+    environ = {name: cli.env[name] for name in ("TAILNET_API_BASE", "TAILNET_HOME")}
+    return Posture.from_env(environ, real_home=tmp_path / "real")
