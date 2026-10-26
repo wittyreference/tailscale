@@ -444,8 +444,12 @@ def test_a_reread_that_returns_another_device_confirms_nothing(cli, net, armed, 
         == ("failed", False, "unconfirmed", None)
 
 
-def test_a_429_on_a_write_is_sent_exactly_once(cli, net, armed):
-    net.outcome("pi5", 429, lands=False, headers={"Retry-After": "0"})
+@pytest.mark.parametrize("reread", ["unchanged", "changed", "failed"])
+def test_a_429_on_a_write_is_sent_exactly_once(cli, net, armed, reread):
+    net.outcome("pi5", 429, lands=reread == "changed", headers={"Retry-After": "0"})
+    if reread == "failed":
+        net.loopback.route("GET", f"{API}/device/{IDS['pi5']}", lambda request: (
+            500, {}, {"message": "the test answers HTTP 500"}))
     result = disable(cli, "pi5", apply=True)
     env = envelope(result)
     assert (result.returncode, env["outcome"], env["error"]["code"]) == (7, "rejected",
@@ -454,9 +458,15 @@ def test_a_429_on_a_write_is_sent_exactly_once(cli, net, armed):
     assert "nothing was retried" in env["error"]["message"]
     assert len(net.writes()) == 1
     [logged] = writes_logged(armed)
-    # The re-read shows no change, so the rejection itself is confirmed.
-    assert (logged["outcome"], logged["confirmed"], logged["failure"]) == ("failed", True,
+    # A rejection is confirmed only when the re-read shows no change (§12.6 step 9): a change
+    # visible anyway, or no re-read at all, leaves it unconfirmed.
+    confirmed = reread == "unchanged"
+    assert (logged["outcome"], logged["confirmed"], logged["failure"]) == ("failed", confirmed,
                                                                            "rejected")
+    assert env["data"]["results"][0]["confirmed"] is confirmed
+    assert logged["observed_after"] == {"unchanged": {"keyExpiryDisabled": False},
+                                        "changed": {"keyExpiryDisabled": True},
+                                        "failed": None}[reread]
 
 
 def test_the_write_token_never_touches_disk_and_comes_from_the_write_client(cli, net, armed):
@@ -780,8 +790,9 @@ def test_a_device_listed_by_any_form_a_device_argument_takes_is_protected(cli, n
     assert "line 5 " in unmatched["message"] and "oldbox" not in result.stdout + result.stderr
 
 
-def test_a_400_on_a_tag_write_exits_7_and_explains_the_client_tag_rule(cli, net, armed):
-    net.outcome("pi5", 400, lands=False)
+@pytest.mark.parametrize("lands", [False, True])
+def test_a_400_on_a_tag_write_exits_7_and_explains_the_client_tag_rule(cli, net, armed, lands):
+    net.outcome("pi5", 400, lands=lands)
     result = tag(cli, "pi5", "--add", "tag:lab", apply=True, confirm="retag:pi5")
     env = envelope(result)
     assert (result.returncode, env["outcome"], env["error"]["code"]) == (7, "rejected",
@@ -792,5 +803,9 @@ def test_a_400_on_a_tag_write_exits_7_and_explains_the_client_tag_rule(cli, net,
     assert "[tag:fleet]" in message
     assert len(net.writes()) == 1
     [logged] = writes_logged(armed)
+    # A 400 whose change shows on the re-read is not a confirmed rejection.
     assert (logged["outcome"], logged["failure"], logged["confirmed"]) == ("failed", "rejected",
-                                                                           True)
+                                                                           not lands)
+    assert env["data"]["results"][0]["confirmed"] is (not lands)
+    assert logged["observed_after"] == {"tags": ["tag:fleet", "tag:lab"] if lands
+                                        else ["tag:fleet"]}
