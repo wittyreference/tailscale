@@ -105,6 +105,24 @@ def test_invalid_json_aborts_without_writing(tmp_path, content):
         assert json.dumps(rule) in outcome.message
 
 
+@pytest.mark.parametrize("content", ['{"x-note": 1e400}', '{"x-note": -1e400}',
+                                     '{"x-note": NaN}', '{"x-note": Infinity}',
+                                     '{"permissions": {"ask": []}, "x": -Infinity}'])
+def test_a_number_claude_code_cannot_read_back_aborts_without_writing(tmp_path, content):
+    # Python reads 1e400 as inf and would write it back as the bare token Infinity, and it
+    # accepts NaN and Infinity, none of which is JSON; Claude Code parses settings as strict
+    # JSON and skips a file that fails whole, every rule in it with it.
+    path = tmp_path / "settings.json"
+    path.write_text(content)
+    outcome = settings_merge.merge_file(path, RULES, now=NOW)
+    assert outcome.status == "aborted" and "not valid JSON" in outcome.message
+    assert path.read_text() == content
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["settings.json"]
+    assert settings_merge.remove_file(path, RULES, now=NOW).status == "aborted"
+    with pytest.raises(ValueError):
+        settings_merge.dump({"x": float("inf")})
+
+
 @pytest.mark.parametrize("doc, why", [
     ({"permissions": []}, "`permissions` is not an object"),
     ({"permissions": "ask"}, "`permissions` is not an object"),
@@ -212,9 +230,10 @@ def test_a_group_writable_claude_directory_still_takes_its_0600_backup(tmp_path,
 def test_a_write_that_does_not_read_back_is_restored_from_the_backup(tmp_path):
     path = write(tmp_path / "settings.json", {"permissions": {}}, mode=0o640)
     original = path.read_bytes()
-    with pytest.raises(settings_merge.Unmergeable, match="did not read back"):
-        settings_merge.replace_checked(path, b"{not json", 0o640, original)
-    assert path.read_bytes() == original and path.stat().st_mode & 0o777 == 0o640
+    for written in (b"{not json", b'{"permissions": {}, "x": Infinity}'):
+        with pytest.raises(settings_merge.Unmergeable, match="did not read back"):
+            settings_merge.replace_checked(path, written, 0o640, original)
+        assert path.read_bytes() == original and path.stat().st_mode & 0o777 == 0o640
     # A file that did not exist before is removed again rather than left unreadable.
     fresh = tmp_path / "fresh.json"
     with pytest.raises(settings_merge.Unmergeable):

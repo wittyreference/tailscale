@@ -104,7 +104,8 @@ def warnings(settings, rules):
 
 def dump(settings):
     """A settings document as the file step writes it: indented, with a trailing newline."""
-    return json.dumps(settings, indent=INDENT, ensure_ascii=False) + "\n"
+    # allow_nan=False: NaN and Infinity are not JSON, and Claude Code would skip the file.
+    return json.dumps(settings, indent=INDENT, ensure_ascii=False, allow_nan=False) + "\n"
 
 
 def by_hand(rules, removing=False):
@@ -154,9 +155,12 @@ def load(path):
     except OSError as exc:
         raise Unmergeable(f"{path}: {exc.strerror}") from None
     try:
-        settings = json.loads(raw.decode("utf-8"))
-    except ValueError:
+        settings = gate.parse_strict(raw.decode("utf-8"))
+    except json.JSONDecodeError:
         raise Unmergeable(f"{path} is not valid JSON") from None
+    except ValueError as exc:
+        raise Unmergeable(f"{path} is not valid JSON, or not JSON this merge can write back: "
+                          f"{exc}") from None
     try:
         _check_shape(settings)
     except Unmergeable as exc:
@@ -229,7 +233,7 @@ def replace_checked(path, data, mode, original):
     path = Path(path)
     _write_atomic(path, data, mode)
     try:
-        json.loads(secure_files.read_regular(path, gate.SETTINGS_MAX).decode("utf-8"))
+        gate.parse_strict(secure_files.read_regular(path, gate.SETTINGS_MAX).decode("utf-8"))
         return
     except (ValueError, OSError, secure_files.Unreadable):
         pass

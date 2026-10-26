@@ -1047,6 +1047,21 @@ changed, planted or ignored file would travel as if it came from the pin"), and 
 a credential 0600 or refused. `git archive HEAD` was not used: it would drop the uncommitted
 tracked edits the dirty flag exists to allow.
 
+**A64. (review, 2026-10-26) finding 25:** §20.4 step 4 re-read the written settings "with
+`json.load`", and §11.5's gate check and the merge's own read used the same parser; Python's json
+reads `NaN`, `Infinity` and `-Infinity`, which JSON lacks, and reads 1e400 as inf, which `dump`
+wrote back as the bare token `Infinity`; so a settings file holding a value beyond a double's
+range under a key Claude Code does not type-check was rewritten into one Claude Code skips whole
+(the gate and every deny rule of MC's with it, silently under `-p`), the read-back passed, and
+status, doctor and the guard reported the gate present. Every settings read now goes through
+`gate.parse_strict`, which refuses those three tokens and any number no double holds: the merge
+and the removal abort with nothing written and the rules for MC to handle by hand, the read-back
+restores the backup, the gate counts every rule missing (so every `--apply` refuses, invariant 8),
+and `dump` writes with `allow_nan=False`; because the read-back exists to catch a written file
+Claude Code cannot read, which means a parser at least as strict as Claude Code's, and a gate
+must never vouch for rules Claude Code will not apply. 1e400 itself Claude Code reads (as
+Infinity, which its schema may refuse); refusing it errs toward a refused `--apply`.
+
 ---
 
 ## 0. The design on one page

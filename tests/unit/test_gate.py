@@ -85,6 +85,18 @@ def test_an_unparseable_settings_file_counts_every_rule_missing(tmp_path, conten
     assert not gate.gate_present(path)
 
 
+@pytest.mark.parametrize("extra", ["NaN", "Infinity", "-Infinity", "1e400"])
+def test_a_settings_file_claude_code_would_skip_holds_no_rule(tmp_path, extra):
+    # Claude Code parses settings as strict JSON and skips a file that fails whole; Python's
+    # json reads NaN and Infinity, and 1e400 only as inf, which it can never write back.
+    ask, deny = every_rule()
+    path = tmp_path / "settings.json"
+    path.write_text('{"permissions": ' + json.dumps({"ask": ask, "deny": deny})
+                    + ', "x-note": ' + extra + "}")
+    assert gate.missing_rules(path) == ask + deny
+    assert not gate.gate_present(path)
+
+
 def test_a_missing_or_unreadable_settings_file_counts_every_rule_missing(tmp_path):
     ask, deny = every_rule()
     assert gate.missing_rules(tmp_path / "absent.json") == ask + deny

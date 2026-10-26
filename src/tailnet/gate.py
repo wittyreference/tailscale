@@ -2,6 +2,7 @@
 # ABOUTME: Every --apply refuses without the gate rule; status and doctor report each missing rule (§11.5).
 
 import json
+import math
 import os
 import stat
 from pathlib import Path
@@ -16,6 +17,31 @@ SETTINGS_RULE_FORMS = {
     "Edit(~/.claude/settings.json)": "Edit(/{path})",
     "Bash(*.claude/settings.json*)": "Bash(*{path}*)",
 }
+
+
+def _not_json(token):
+    """parse_strict's answer to NaN, Infinity and -Infinity, which Python reads and JSON lacks."""
+    raise ValueError(f"{token} is not JSON")
+
+
+def _finite(text):
+    """A JSON number with a fraction or exponent, refused when no double holds it (1e400)."""
+    value = float(text)
+    if not math.isfinite(value):
+        raise ValueError("a number is beyond a double's range")
+    return value
+
+
+def parse_strict(data):
+    """Parse a settings file as strictly as Claude Code does, or stricter; raise ValueError.
+
+    Claude Code parses settings as strict JSON and skips a file that fails, every rule in it
+    with it, so a file holding NaN or Infinity, which Python's json reads, holds no rule at
+    all. Python reads 1e400 as inf and can only write it back as the bare token Infinity,
+    and Claude Code reads it as Infinity, which its schema may refuse: such a file holds no
+    rule this CLI vouches for, and none the installer may rewrite.
+    """
+    return json.loads(data, parse_constant=_not_json, parse_float=_finite)
 
 
 def rules():
@@ -104,7 +130,7 @@ def _permissions(path):
     """
     data = _read(path)
     try:
-        doc = json.loads(data) if data is not None else None
+        doc = parse_strict(data) if data is not None else None
     except ValueError:
         doc = None
     permissions = doc.get("permissions") if isinstance(doc, dict) else None
