@@ -43,6 +43,10 @@ STATUSES = ("PASS", "WARN", "FAIL", "INFO", "SKIP")
 # with the critic question its answer settles (§16.2, §16.3). They re-run only when asked,
 # never answered, or answered more than SETTLE_AFTER ago; every other step runs every time.
 GATED = {"S2": "Q1", "S3": "Q3", "S5": "Q4", "S7b": "Q20", "S8": "Q23"}
+# The gated steps whose answer describes one read client rather than the API: S2 is that
+# client's narrowed mint and S3 its own key record, so a rotated client measures them again
+# (A55). Every settled entry records the client it was measured with.
+CLIENT_BOUND = frozenset({"S2", "S3"})
 # Verification-discipline's drift rule: an answer older than this is assumed stale.
 SETTLE_AFTER = timedelta(days=30)
 
@@ -120,17 +124,23 @@ def age_days(entry, now):
     return (now - parse_time(entry["measured_at"])) // timedelta(days=1)
 
 
-def due(entry, now, *, settle):
+def due(entry, now, *, settle, client_id=None):
     """Why a settle-gated step must re-measure now, or None when its stored answer stands.
 
     It re-runs on --settle, when the question was never answered, and when the newest
     answer is older than SETTLE_AFTER: live state drifts, and a month-old answer is a
-    claim about the past (§16.3).
+    claim about the past (§16.3). A `client_id`, given for a CLIENT_BOUND step, must be the
+    one the answer was measured with, or the answer describes another client (A55).
     """
     if settle:
         return "--settle"
     if not _valid_answer(entry):
         return "never settled"
+    if client_id is not None and entry.get("client_id") != client_id:
+        was = entry.get("client_id")
+        if not isinstance(was, str):
+            return "settled before its read client was recorded; measuring again"
+        return f"settled for read client {was}, not {client_id}; measuring again"
     measured = parse_time(entry["measured_at"])
     if now - measured > SETTLE_AFTER:
         return f"last settled {age_days(entry, now)} days ago, over {SETTLE_AFTER.days}"
@@ -606,7 +616,8 @@ class _Run:
         if self.stored_error is not None:
             return "the audit log failed its checks, so no stored answer is trusted", None
         entry = self.stored.get(GATED[step])
-        return due(entry, self.now, settle=self.settle), entry
+        client = self.cred.client_id if step in CLIENT_BOUND else None
+        return due(entry, self.now, settle=self.settle, client_id=client), entry
 
     def reuse(self, step, entry, *, extra="", status=None):
         """Report a stored answer with its original time and its age (§16.3)."""
@@ -618,13 +629,15 @@ class _Run:
         evidence = {**(stored if isinstance(stored, dict) else {}),
                     "settled_at": entry["measured_at"], "reused": True}
         kept = entry.get("status") if entry.get("status") in STATUSES else "INFO"
-        self.add(step, status or kept, f"settled {when} ({days} days ago): {entry['answer']}{extra}",
-                 evidence)
+        # A client-bound answer names its client, so a reader can match it against L4's.
+        whose = f" for read client {entry['client_id']}" if step in CLIENT_BOUND else ""
+        self.add(step, status or kept,
+                 f"settled {when} ({days} days ago){whose}: {entry['answer']}{extra}", evidence)
 
     def settled(self, step, status, answer, evidence, because, *, extra="", next_steps=()):
         """Record a settle-gated step's fresh answer, in this run's line and in the report."""
         entry = {"answer": answer, "evidence": evidence, "status": status,
-                 "measured_at": output.now_utc()}
+                 "measured_at": output.now_utc(), "client_id": self.cred.client_id}
         self.settled_now[GATED[step]] = entry
         self.settled_view[GATED[step]] = {**entry, "step": step, "reused": False, "age_days": 0}
         self.add(step, status, answer + extra, {**evidence, "measured_because": because},

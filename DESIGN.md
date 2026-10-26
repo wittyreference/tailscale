@@ -937,6 +937,18 @@ Both names in the block, and the destination's name in every next step, now go t
 the two rules cannot drift; because the block runs in a shell on the destination, possibly with
 sudo, and a name is data, never a command.
 
+**A55. (review, 2026-10-26) finding 18:** §16.3 keyed a settled answer by its question alone and
+re-measured it only on `--settle`, when never answered, or after 30 days; S3's answer records one
+client's `keyType`, `scopes`, `tags` and `invalid`, and S2's that client's narrowed mint, so after
+MC rotated the read client (`credentials set read`, whose next step is `tailnet doctor`) doctor
+reported the old client's key record as current for up to 30 days and never looked up the new one.
+Every settled entry now records the read client's `client_id`, and the client-bound steps S2 and
+S3 (`doctor.CLIENT_BOUND`) measure again when the stored `client_id` is not the current one, an
+entry without one measuring once more; reused, their finding names the client; S5, S7b and S8
+answer questions about the API and the policy, and keep their 30 days; because an answer about a
+client that is no longer configured is a claim about the past, and A33 already accepts one console
+event as the price of a fresh measurement.
+
 ---
 
 ## 0. The design on one page

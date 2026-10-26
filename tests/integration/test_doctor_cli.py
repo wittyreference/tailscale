@@ -279,7 +279,7 @@ def test_an_answer_older_than_30_days_is_measured_again(cli, tailnet, ready):
         "Q4": {"answer": "a call outside the read scopes is refused with HTTP 404",
                "evidence": {}, "status": "INFO", "measured_at": old},
         "Q3": {"answer": "the read client's ID works as a key ID", "evidence": {},
-               "status": "PASS", "measured_at": young}}})
+               "status": "PASS", "measured_at": young, "client_id": "kRead0001CNTRL"}}})
     env = envelope(cli("--json", "doctor"))
     calls = set(tailnet.calls())
     assert ("GET", ROUTES) in calls and ("GET", KEY) not in calls
@@ -296,12 +296,38 @@ def test_an_answer_recorded_under_another_posture_is_never_reused(cli, tailnet, 
     line = {"v": 1, "ts": young, "event": "doctor.run", "cli_version": "0.1.0",
             "posture": "production", "host": "h", "user": "u", "pid": 1, "argv": [],
             "settled": {"Q3": {"answer": "the read client's ID works as a key ID",
-                               "evidence": {}, "status": "PASS", "measured_at": young}}}
+                               "evidence": {}, "status": "PASS", "measured_at": young,
+                               "client_id": "kRead0001CNTRL"}}}
     ready.state_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
     secure_files.append_locked(ready.state_dir / "audit.jsonl", (json.dumps(line) + "\n").encode())
     env = envelope(cli("--json", "doctor"))
     assert ("GET", KEY) in set(tailnet.calls())
     assert "days ago" not in checks_of(env)["S3"]["finding"]
+
+
+def test_a_rotated_read_client_has_its_own_key_looked_up(cli, tailnet, ready, loopback):
+    # `credentials set read` tells the agent to run doctor next to check the new client, so
+    # S3 must not report the old client's key record as the new one's (A55).
+    assert envelope(cli("--json", "doctor"))["exit"] == 0
+    write_role(ready, "read", client_id="kRead0002CNTRL")
+    rotated = API + "/tailnet/-/keys/kRead0002CNTRL"
+    loopback.route("GET", rotated, (200, {"X-Tailscale-Request-Id": "REQ-key-2"}, {
+        "id": "kRead0002CNTRL", "keyType": "client", "scopes": ["all"], "tags": ["tag:fleet"],
+        "invalid": False}))
+    before = len(tailnet.loopback.requests)
+    env = envelope(cli("--json", "doctor"))
+    calls = set(tailnet.calls(before))
+    assert ("GET", rotated) in calls and ("GET", KEY) not in calls
+    s3 = checks_of(env)["S3"]
+    assert "days ago" not in s3["finding"] and "scopes all, tags tag:fleet" in s3["finding"]
+    assert "kRead0001CNTRL, not kRead0002CNTRL" in s3["evidence"]["measured_because"]
+    # The answers that are about the API, not the client, are still reused.
+    assert ("GET", ROUTES) not in calls
+    [_, line] = audit_records(ready, "doctor.run")
+    assert line["settled"]["Q3"]["client_id"] == "kRead0002CNTRL"
+    # Reused, the answer names the client it belongs to.
+    again = checks_of(envelope(cli("--json", "doctor")))["S3"]
+    assert "(0 days ago) for read client kRead0002CNTRL:" in again["finding"]
 
 
 def test_doctor_emits_questions_in_priority_order(cli, tailnet, home):

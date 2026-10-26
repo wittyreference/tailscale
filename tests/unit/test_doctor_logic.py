@@ -68,6 +68,22 @@ def test_answers_older_than_30_days_are_re_measured():
     assert doctor.settled_answers([run_line({"Q4": unreadable})]) == {}
 
 
+def test_an_answer_about_another_read_client_is_measured_again():
+    # S2 and S3 describe one client (its narrowed mint, its key record), so after MC rotates
+    # the read client the stored answer is about a client no longer in use (A55).
+    stored = {**answer("the read client's ID works as a key ID", 2), "client_id": "kRead0001CNTRL"}
+    assert doctor.due(stored, NOW, settle=False, client_id="kRead0001CNTRL") is None
+    assert doctor.due(stored, NOW, settle=False, client_id="kRead0002CNTRL") == (
+        "settled for read client kRead0001CNTRL, not kRead0002CNTRL; measuring again")
+    # An answer recorded before the client was, measures once more, then carries it.
+    bare = answer("the read client's ID works as a key ID", 2)
+    assert doctor.due(bare, NOW, settle=False, client_id="kRead0001CNTRL") == (
+        "settled before its read client was recorded; measuring again")
+    # Steps that are not about the client never ask.
+    assert doctor.due(bare, NOW, settle=False) is None
+    assert doctor.CLIENT_BOUND == {"S2", "S3"}
+
+
 def test_the_newest_answer_per_question_is_found_by_scanning_back():
     records = [  # newest first, as the audit log is read back
         run_line({"Q4": answer("refused with HTTP 403", 1)}, 1),
