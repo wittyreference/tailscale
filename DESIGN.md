@@ -848,6 +848,16 @@ held back, so the copy must also be found afterwards, and §2's L2 row promises 
 disk between `forget` and the next `set`. `status` still reports `write.secret` by its own name
 only.
 
+**A48. (review, 2026-10-26) finding 11:** §7.1 and §7.2 refuse anything beginning `tskey-` in
+test posture so that "a real secret copied into the test home is still never sent", but only
+client secrets were checked; a `read-token.json` holding a live access token, whose documented
+shape is `tskey-…` [OC L132], was sent as the bearer to the loopback listener. A cached access
+token beginning `tskey-` in test posture is now removed unsent and refused as
+`TEST_POSTURE_REAL_SECRET` (exit 3) before any request; because a cached token is a bearer
+secret in its own right, and removing a real client secret from a test home, as that refusal
+advises, left the cache beside it. A token minted in test posture is not checked: the loopback
+listener issued it.
+
 ---
 
 ## 0. The design on one page

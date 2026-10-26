@@ -294,6 +294,22 @@ def test_a_tskey_secret_in_test_posture_sends_zero_requests(cli, loopback, home,
     assert secret not in result.stdout + result.stderr
 
 
+def test_a_tskey_access_token_cached_in_a_test_home_is_never_sent(cli, loopback, configured):
+    # A real read-token.json copied into a test home (or left behind when a real secret was
+    # removed from it) holds a live bearer token: test posture never sends it to loopback.
+    live = "tskey-" + "0123456789ABCDEF" + "cachedR" * 3
+    write_cache(configured, live, expires_in=3000)
+    serve_devices(loopback)
+    result = cli("--json", "device", "list")
+    env = envelope(result)
+    assert (result.returncode, env["error"]["code"]) == (3, "TEST_POSTURE_REAL_SECRET")
+    assert loopback.requests == []
+    assert live not in result.stdout + result.stderr
+    # The cache is dropped unsent, so the next run mints a fixture token as usual.
+    assert not (configured.config_dir / "read-token.json").exists()
+    assert cli("--json", "device", "list").returncode == 0
+
+
 def test_an_unsafe_override_exits_3_and_contacts_nothing(cli, loopback, configured):
     serve_devices(loopback)
     port = loopback.port

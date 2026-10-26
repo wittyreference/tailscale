@@ -323,6 +323,14 @@ class ReadToken:
             return None
         if not isinstance(doc, dict) or not _register(doc.get("access_token")):
             return None
+        if self._posture.kind == "test" and doc["access_token"].startswith("tskey-"):
+            # §7.2: a real secret in a test home is never sent to loopback, and a cached
+            # access token is a bearer secret of its own [OC L132]: a live one copied in, or
+            # left when its client secret was removed, is dropped unsent and refused.
+            _discard(self._path)
+            raise LocalError("TEST_POSTURE_REAL_SECRET",
+                             f"{self._path} holds a tskey- access token, and this is a test run: "
+                             "a real token is never sent to a loopback API; it was removed")
         if not cache_usable(doc, self._cred.client_id, datetime.now(timezone.utc)):
             return None
         expires_at = cache_expiry(doc)
