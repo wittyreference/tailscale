@@ -219,6 +219,20 @@ recorded must not be sent (C9), while a read changes nothing and the console kee
 of the mint (L5); a file that is never read cannot supply its `expires_at`; and a token on disk
 that nothing will use is exposure with no benefit.
 
+**A16. (build, 2026-10-26)** §6 lists the `api` functions with no session argument
+(`list_devices()`, …, `set_device_tags(node_id, tags, write_token)`) and leaves what reads return;
+it was built so that every function takes an `api.Session` first (the transport and a lazy
+`tokens.ReadToken`; `api.session(posture)` builds one); reads return `api.Reply(data, response)`;
+the two validate calls return the 200 or 400 `Response` for `policy.parse_verdict`; the writes
+take a `tokens.Token` minted from the write client and refuse anything else; `set_device_tags`
+refuses an empty or non-string tag list before sending; and a key ID gets the same
+letters-and-digits check as a device ID, refused as `CREDENTIAL_MALFORMED` because it comes from a
+credential file; because a module-level session would be the hidden global state A12 rules out;
+the envelope's `request_ids` and the policy ETag need the response; the verdict parser takes the
+status and the body; a single-client read token can write, so a bug that passed it to a write
+must fail loudly; an empty list would strip every tag, with results the spec marks unverified;
+and either ID ends up in a request path.
+
 ---
 
 ## 0. The design on one page
