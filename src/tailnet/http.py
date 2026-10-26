@@ -130,13 +130,20 @@ def server_says(response):
 
     The write flow quotes it too, when it reports what the API said to a write.
     """
+    return body_says(response.body)
+
+
+def body_says(body):
+    """What a response body says, redacted: the API's `{"message": …}` [spec 4823-4829], or an
+    excerpt of a body in any other shape. The policy verdict quotes a validate 400 this way.
+    """
     try:
-        doc = json.loads(response.body)
+        doc = json.loads(body)
     except ValueError:
         doc = None
     if isinstance(doc, dict) and isinstance(doc.get("message"), str):
         return redact(doc["message"])
-    return _excerpt(response.body) if response.body else "(empty body)"
+    return _excerpt(body) if body else "(empty body)"
 
 
 def _read_capped(reply, where):

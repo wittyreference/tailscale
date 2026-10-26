@@ -405,6 +405,29 @@ what must be reported; invariant 8 governs every `--apply` while invariant 4 ope
 secret only to send; one device needs one write; a mismatched record cannot confirm anything;
 and `test_only_api_and_tokens_issue_post_requests` keeps sending methods in `api.py`.
 
+**A27. (build, 2026-10-26)** §14.3 gave the 200 verdict rules ending in "any other JSON → fail",
+and "other statuses → `ApiError`" without a code; §14.4 gave readiness two checks and four
+reasons; §5.2 said a `policy test` port is "a single number from 0 to 65535. Port 0 is for
+`--proto icmp`" and named four source forms; it was built (1) reading a whitespace-only 200 body
+as empty, and a 200 body that is neither empty nor JSON, or any status but 200 and 400, as
+`API_BAD_RESPONSE` (exit 4); (2) knowing a 200 shape only when its keys are among `message` and
+`data` and each `data` entry's among `user`, `errors` and `warnings` (a `null` list read as
+empty), so any other key fails as `unknown shape`, warnings beside it included; (3) matching the
+want/got pattern against the whole line, keeping a line with anything more verbatim; (4) with a
+draft also NOT READY when `base.hujson` no longer hashes to `base_sha256`, when the live ETag is
+absent, or when the live bytes moved under an unchanged ETag, each with its own reason, drift
+listed before validation; and (5) refusing port 0 without an ICMP `--proto` and any other port
+with one (`TEST_PORT`), a test with neither `--accept` nor `--deny`, a bracketless IPv6 or a CIDR
+destination, an `autogroup:` source (none of the four forms), and a source of only digits and
+dots, or hex and colons, as an IP (`TEST_SRC_IS_IP`); because a server may end even an empty
+answer with a newline **[inference]**; nothing the parser cannot read may read as a pass, while
+an answer that is no verdict at all is a malformed reply (§10.3), not a failed candidate an agent
+would go and edit; an undocumented key could carry a failure; a half-parsed line would misreport
+its address; the diff MC applies is drawn from `base.hujson`, a missing ETag cannot vouch for an
+unmoved policy, and re-validating a draft whose base moved is wasted work; and a TCP test on port
+0, an ICMP test on port 22, or a test that asserts nothing passes or fails without answering
+anything MC asked.
+
 ---
 
 ## 0. The design on one page
