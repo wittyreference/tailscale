@@ -204,8 +204,38 @@ def test_a_timeout_with_allow_on_tailscale_ssh_is_unexplained():
         found = diagnose.verdict(replace(facts, ssh_admitted=admitted, source_tagged=False))
         assert found.code == "TS_SSH_TIMEOUT_UNEXPLAINED"
         assert "TS_SSH_TIMEOUT_UNEXPLAINED" in diagnose.HOST_SIDE
-    # The row holds only once the ssh section admitted the source: unknown admission is not that.
-    assert code(facts, ssh_admitted=None) == "INCONCLUSIVE"
+    # The ssh section is asked only after the handshake, so its answer, known or not, never
+    # decides a timeout: the row holds whatever it said (A50).
+    assert code(facts, ssh_admitted=None) == "TS_SSH_TIMEOUT_UNEXPLAINED"
+
+
+def test_a_timeout_on_a_tailscale_ssh_host_is_never_blamed_on_the_ssh_section():
+    # tailscaled completes the :22 handshake itself and asks the ssh section only at SSH
+    # login [tsssh L61, L118], so a denying ssh section shows as an open port and a refused
+    # login, never as a timeout. Its answer is a second blocker beside the verdict (A50).
+    spec5 = replace(OPEN_ROAD, tcp="timeout", network_allowed=True, ssh_enabled=True,
+                    ssh_user="spec5")
+    denied = diagnose.verdict(replace(spec5, ssh_admitted="denied"))
+    assert denied.code == "TS_SSH_TIMEOUT_UNEXPLAINED"
+    assert "cannot cause a timeout" in denied.explanation
+    assert "also refuse it as spec5" in denied.explanation
+    unasked = diagnose.verdict(replace(spec5, ssh_user=None))
+    assert unasked.code == "TS_SSH_TIMEOUT_UNEXPLAINED" and "--ssh-user" in unasked.explanation
+    # The droplet is tagged: a check-only rule can never admit it, which is MC's MC6.
+    tagged = diagnose.verdict(replace(spec5, ssh_admitted="check"))
+    assert tagged.code == "TS_SSH_TIMEOUT_UNEXPLAINED" and "MC6" in tagged.explanation
+    assert "TS_SSH_TIMEOUT_UNEXPLAINED" in diagnose.HOST_SIDE
+    # A reset or a probe error is not the ssh section's doing either.
+    assert code(spec5, tcp="refused", ssh_admitted="denied") == "REFUSED_BY_HOST"
+    assert code(spec5, tcp="error:EHOSTUNREACH", ssh_admitted="denied") == "INCONCLUSIVE"
+    # An open port is where the ssh section's answer decides, as it does in --from mode.
+    for facts in (replace(spec5, tcp="open"), replace(spec5, mode="from", tcp=None)):
+        assert code(facts, ssh_admitted="denied") == "TS_SSH_POLICY"
+        assert code(facts, ssh_admitted="check") == "TS_SSH_CHECK_FOR_TAGGED"
+        assert code(facts, ssh_user=None) == "TS_SSH_UNVERIFIED"
+    # A dropped network keeps its own verdict: the drop explains the timeout.
+    assert code(spec5, network_allowed=False, ssh_admitted="check") == "TS_SSH_CHECK_FOR_TAGGED"
+    assert code(spec5, network_allowed=False, ssh_admitted="denied") == "POLICY_DROP"
 
 
 def test_unknown_ssh_enabled_is_inconclusive_with_both_hypotheses():

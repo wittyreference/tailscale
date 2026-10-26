@@ -871,6 +871,21 @@ measured against a loopback stand-in says nothing about the real API, and a prod
 `~/.config/tailnet` may legitimately be a link, so the check stays in test posture. `status`
 still shows the newest `doctor.run` line of any posture: it reports, and gates nothing.
 
+**A50. (review, 2026-10-26) finding 1:** §15.2 step 7 put `TS_SSH_CHECK_FOR_TAGGED`,
+`TS_SSH_POLICY` and `TS_SSH_UNVERIFIED` above the timeout rows, and its
+`TS_SSH_TIMEOUT_UNEXPLAINED` note (with A31 (5)) read "so the ssh section admitted the source, or
+the rows above would have matched"; so in self mode a TCP timeout to spec5's :22 with the ssh
+section denying was blamed on the ssh section, and the next step drafted an ssh rule that cannot
+fix a timeout, with the on-host ladder withheld. It was changed so that in self mode, on a
+Tailscale SSH port with the network allowed and the probe not `open`, the ssh section is never
+the verdict: a timeout is `TS_SSH_TIMEOUT_UNEXPLAINED` whatever the ssh section said (admitted,
+denied, check-only for a tagged source with MC6 named, unasked, or unknown), which the
+explanation reports as a second finding, and a reset or probe error falls to `REFUSED_BY_HOST` or
+`INCONCLUSIVE`; the three ssh verdicts stay for an `open` port and for `--from` mode, and
+`TS_SSH_CHECK_FOR_TAGGED` keeps its place when the network drops it; because tailscaled completes
+the handshake on :22 and asks the ssh section only at SSH login [tsssh L61, L118], so the ssh
+section can produce an open port and a refused login, never a timeout.
+
 ---
 
 ## 0. The design on one page

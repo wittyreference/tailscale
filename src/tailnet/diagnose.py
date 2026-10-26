@@ -137,6 +137,38 @@ def _inconclusive(facts, layer):
     return words
 
 
+def _ts_ssh_timeout(facts):
+    """TS_SSH_TIMEOUT_UNEXPLAINED's words: why the ssh section is not the cause, and what it said.
+
+    tailscaled completes the TCP handshake on :22 itself and asks the ssh section only at SSH
+    login [tsssh L61, L118], so the ssh section's answer is a second finding here, never the
+    reason the connection timed out (A50).
+    """
+    admitted, user = facts.ssh_admitted, facts.ssh_user
+    if admitted == "accept":
+        said = f"the ssh section admits the source as {user}"
+    elif admitted == "check" and facts.source_tagged:
+        said = (f"once it connects, the ssh section admits this tagged source as {user} only in "
+                "check mode, which a tagged source cannot use [tsssh L218]: an accept-mode rule "
+                "is MC's decision (MC6)")
+    elif admitted == "check":
+        said = f"the ssh section admits the source as {user} in check mode only"
+    elif admitted == "denied":
+        said = (f"once it connects, the ssh section will also refuse it as {user}, in accept or "
+                "check mode")
+    elif not user:
+        said = "the ssh section was not asked: re-run with --ssh-user to learn whether it admits"
+    else:
+        said = "the ssh section's answer is unknown"
+    return ("the policy allows it, yet the connection timed out; tailscaled answers :22 itself "
+            "and asks the ssh section only at SSH login, after the TCP handshake, so the ssh "
+            "section cannot cause a timeout: the SYN was dropped before tailscaled took it (a "
+            "policy change not yet propagated, or traffic the identity test does not represent), "
+            "or Tailscale SSH is not running there; while it runs, a host firewall is probably "
+            f"not in the path [inference]; separately, {said}; if the policy changed within the "
+            "last minute, re-run once first (propagation timing is unverified)")
+
+
 def verdict(facts):
     """The verdict for one destination: the first row of §15.2 step 7 whose condition holds.
 
@@ -181,16 +213,22 @@ def verdict(facts):
         return Verdict("ADMITTED_CHECK_MODE", "reachable, but the ssh section admits this user "
                                               "only in check mode: each session needs a browser "
                                               "check every period (P7)")
-    if admitted == "check" and facts.source_tagged:
+    # In self mode the probe, not the ssh section, explains a port that did not open: the ssh
+    # section is asked only after tailscaled has completed the handshake [tsssh L61], so it
+    # can never cause a timeout or a reset (A50). Its answer stays in the explanation.
+    probe_decides = self_mode and layer and allowed and tcp != "open"
+    if probe_decides and tcp == "timeout":
+        return Verdict("TS_SSH_TIMEOUT_UNEXPLAINED", _ts_ssh_timeout(facts))
+    if admitted == "check" and facts.source_tagged and not probe_decides:
         dropped = "; the network policy drops it as well" if allowed is False else ""
         return Verdict("TS_SSH_CHECK_FOR_TAGGED",
                        "the ssh section admits this source only in check mode, and an SSH rule "
                        "from a tagged device cannot be in check mode [tsssh L218]: it can never "
                        f"connect this way; an accept-mode rule is MC's decision (MC6){dropped}")
-    if layer and allowed and admitted == "denied":
+    if layer and allowed and admitted == "denied" and not probe_decides:
         return Verdict("TS_SSH_POLICY", f"the network allows it, but the ssh section has no rule "
                                         f"admitting this source as {user}, in accept or check mode")
-    if layer and allowed and not user:
+    if layer and allowed and not user and not probe_decides:
         return Verdict("TS_SSH_UNVERIFIED", "the network allows it, and on :22 Tailscale SSH "
                                             "decides admission by user: re-run with --ssh-user")
     if allowed is False:
@@ -213,11 +251,6 @@ def verdict(facts):
                                          "firewall, or a service bound to another address; if the "
                                          "policy changed within the last minute, re-run once "
                                          "first (propagation timing is unverified)")
-    if self_mode and tcp == "timeout" and allowed and layer and admitted in SSH_MODES:
-        return Verdict("TS_SSH_TIMEOUT_UNEXPLAINED",
-                       "the policy and the ssh section admit the source, yet the connection timed "
-                       "out; tailscaled claims :22 itself, so a host firewall is probably not in "
-                       "the path [inference]")
     return Verdict("INCONCLUSIVE", _inconclusive(facts, layer))
 
 

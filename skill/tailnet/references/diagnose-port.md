@@ -70,7 +70,8 @@ Destinations are always addressed by IPv4 100.x, because MagicDNS failed on the 
    S passes; `want: Accept, got: Drop` is kept verbatim.
 6. **Tailscale SSH layer**, only when `sshEnabled == true` and the port is 22. The network rule is
    necessary; the `ssh` section decides admission [policy-file L542-545].
-   - No `--ssh-user` gives `TS_SSH_UNVERIFIED`.
+   - No `--ssh-user` gives `TS_SSH_UNVERIFIED`, unless a self-mode probe timed out: then the
+     verdict is `TS_SSH_TIMEOUT_UNEXPLAINED` (DESIGN A50).
    - Otherwise the CLI reads the live policy as JSON, copies it in memory, **deletes its `tests` and
      `sshTests`** so only the probe runs, adds a host alias `tailnet-diag-dst` for the destination
      (`sshTests.dst` takes aliases, not raw IPs [policy-file L963]), sets one `sshTests` entry with
@@ -111,14 +112,14 @@ calls made. Human output gives one verdict line per host, then the evidence, eac
 | `PATH_DOWN` | Self mode; TSMP failed | A connectivity fault, not policy [manage L41] | — | `tailscale netcheck`, `tailscale status`; the official skill's `connectivity.md` |
 | `OPEN` | TCP `open`, and Tailscale SSH off or admitted with `accept` | The port is reachable through both policy and host | That `ssh` will log in: a wrong user and a missing key look alike (tailnet-ssh FINDINGS §12) | `ssh -v <user>@<ipv4>` |
 | `ADMITTED_CHECK_MODE` | User source; admitted only by a `check` rule; and the path holds: TCP `open` in self mode, network allowed in `--from` mode (DESIGN A31) | Reachable after a browser check each period | Unattended access | MC's case for the phone (P7) |
-| `TS_SSH_CHECK_FOR_TAGGED` | Tagged source; only a `check` rule matches | It can never work: "An SSH access rule from a tagged device cannot be in check mode" [SSH L218] | — | An `accept` rule `tag:dev` → `tag:fleet` needs MC's answer to MC6 |
-| `TS_SSH_POLICY` | Tailscale SSH on; network allowed; `ssh` denies both ways | The `ssh` section has no rule from S to this host for that user | — | `policy-workflow.md`, the `ssh` rule shape |
-| `TS_SSH_UNVERIFIED` | Tailscale SSH on; network allowed; no `--ssh-user` | Nothing about SSH admission yet | — | Rerun with `--ssh-user` |
+| `TS_SSH_CHECK_FOR_TAGGED` | Tagged source; only a `check` rule matches; and TCP `open` in self mode, or `--from` mode, or the network dropped (DESIGN A50) | It can never work: "An SSH access rule from a tagged device cannot be in check mode" [SSH L218] | — | An `accept` rule `tag:dev` → `tag:fleet` needs MC's answer to MC6 |
+| `TS_SSH_POLICY` | Tailscale SSH on; network allowed; `ssh` denies both ways; TCP `open` in self mode, or `--from` mode (DESIGN A50) | The `ssh` section has no rule from S to this host for that user | — | `policy-workflow.md`, the `ssh` rule shape |
+| `TS_SSH_UNVERIFIED` | Tailscale SSH on; network allowed; no `--ssh-user`; TCP `open` in self mode, or `--from` mode (DESIGN A50) | Nothing about SSH admission yet | — | Rerun with `--ssh-user` |
 | `POLICY_DROP` | `network_allowed == false` | The live policy drops it. That matches a timeout: a dropped SYN gets a TSMP reject and no RST (`wrap.go:1234-1252` [source-code]) | — | `tailnet policy draft` with the recipe grant; MC applies; rerun. A Tailscale SSH host also needs an `ssh` rule |
 | `ALLOWED` | `--from` mode; network allowed; Tailscale SSH off or admitted with `accept` | The policy permits it | That the host answers: no probe runs from here | — |
 | `REFUSED_BY_HOST` | Self mode; TCP `refused`; network allowed | The SYN passed Tailscale's filter and the host reset it: nothing listening on that address | — | On-host block |
 | `HOST_SIDE_DROP` | Self mode; TCP `timeout`; network allowed; Tailscale SSH off | The policy allows it; the host firewall or sshd's bind is the suspect | — | On-host block. If the policy changed within the last minute, rerun once first (propagation timing [unverified]) |
-| `TS_SSH_TIMEOUT_UNEXPLAINED` | Self mode; TCP `timeout`; network allowed; Tailscale SSH on, and its `ssh` section admitted the source (DESIGN A31) | tailscaled claims port 22 itself, so a host firewall is probably not in the path [inference] | — | On-host block; the `ssh` probe result is shown as evidence |
+| `TS_SSH_TIMEOUT_UNEXPLAINED` | Self mode; TCP `timeout`; network allowed; Tailscale SSH on, whatever its `ssh` section said (DESIGN A50) | Not the `ssh` section: tailscaled completes the handshake on port 22 and asks the `ssh` section only at login [SSH L61, L118], so it cannot cause a timeout. The SYN was dropped before tailscaled took it, or Tailscale SSH is not running there | Which of those; while Tailscale SSH runs, a host firewall is probably not in the path [inference] | On-host block. The `ssh` section's answer is in the explanation as a second blocker: a denial, or check mode for a tagged source (MC6), still needs fixing once the port opens |
 | `INCONCLUSIVE` | Anything else: probe or API errors, or `sshEnabled` unknown on port 22 with the network allowed (DESIGN A31) | — | — | Every fact is reported and both Tailscale SSH hypotheses listed; a peer's `sshHostKeys` is a weak hint only [unverified] |
 
 ## 5. The on-host block
@@ -180,8 +181,11 @@ timed out then (`tailnet-facts.md` §4).
   `spec5`.
   - The network rule on port 22 is necessary; the `ssh` section decides (critic X1, X10).
   - From the droplet (`tag:dev`, unconfirmed): a check rule can never admit a tagged source
-    [SSH L218], so expect `TS_SSH_CHECK_FOR_TAGGED` or `TS_SSH_POLICY`. The only fix is an `accept`
-    rule, which is open question MC6. Drafts never include it until MC says yes.
+    [SSH L218], so with `--from claude-factory`, or once port 22 opens, expect
+    `TS_SSH_CHECK_FOR_TAGGED` or `TS_SSH_POLICY`. The only fix is an `accept` rule, which is open
+    question MC6. Drafts never include it until MC says yes.
+  - A self-mode timeout to spec5 is never the `ssh` section's doing: it is
+    `TS_SSH_TIMEOUT_UNEXPLAINED`, and the `ssh` answer rides along as a second blocker (DESIGN A50).
   - From MC's phone or albini: user → tagged device is allowed [SSH L216], but since the retag
     `autogroup:self` no longer covers spec5 [policy-file L230], so an explicit user → `tag:fleet`
     `ssh` rule is needed [inference; critic F3.3, R13]. Check mode is fine for people (P7).
@@ -244,7 +248,7 @@ Each is reported as unknown when it matters, never filled in.
 
 Read or fetched 2026-10-26.
 
-- `DESIGN`: `DESIGN.md` §5.2, §5.3, §15, §24, §26 and Amendments A31-A32 in this repo.
+- `DESIGN`: `DESIGN.md` §5.2, §5.3, §15, §24, §26 and Amendments A31, A32 and A50 in this repo.
 - `mc`, `critic`, `api`, `policy-access`: `docs/research/mc-tailnet.md`, `critic.md`,
   `api-surface.md`, `policy-access.md` (all 2026-10-26).
 - `fleet.yaml`: `/home/user/tailnet-ssh/fleet/fleet.yaml` at `2cab922` (2026-10-10).
