@@ -289,6 +289,19 @@ it ends as exit 1 rather than as a code an agent might act on; the probe ladder 
 IP (§3.1); the guard must know which of its two self codes applies; and the production join must
 be testable without running tailscale, which no test may do.
 
+**A21. (build, 2026-10-26)** §6 gave `gate.missing_rules(settings_path)` while §20.4 said it
+compares against `rules_for(claude_dir)`'s output, and neither said where `claude_dir` comes
+from; it was built as `missing_rules(settings_path, claude_dir=None)` beside
+`gate.claude_dir(posture, environ)`, which gives the test home's Claude directory in test
+posture and `CLAUDE_CONFIG_DIR`, made absolute, or `None` in production; `rules_for` refuses a
+relative directory; a settings file that is not a regular file, or is over 1 MiB, is not read and
+counts every rule missing; and `rules()` raises on a `rules.json` that is not v1 with its gate
+among its ask rules; because the comparison must use the directory the installer used and only
+the environment says whether `CLAUDE_CONFIG_DIR` is set, `~/.claude` cannot name a test home, a
+`//` rule is meaningful only for an absolute path [PERM L370], `status` must always answer and a
+FIFO put in place of the settings file would hang a blocking read, and rules that cannot be read
+cannot vouch for a gate, so `--apply` must not go ahead on them.
+
 ---
 
 ## 0. The design on one page
