@@ -928,6 +928,15 @@ policy drop gets a TSMP reject and no RST [wrap.go:1234-1252] and never lets a c
 the test runs as an identity (invariant 11) while a rule may match this host by its address, a host
 alias, a CIDR or a `srcPosture` condition [policy-file L65-81, keyed in `references/diagnose-port.md`].
 
+**A54. (review, 2026-10-26) finding 21:** A32 (8) filled the on-host block with the destination's
+and the source's hostnames as the API gave them, while doctor's protected-list block reduces every
+hostname to `[A-Za-z0-9._-]` because the API takes it from each device's own OS; a hostname
+holding a newline ended the block's comment line and put its own command into what MC pastes.
+Both names in the block, and the destination's name in every next step, now go through
+`diagnose.safe_name`, which turns anything else into `?` and which doctor's block now calls too, so
+the two rules cannot drift; because the block runs in a shell on the destination, possibly with
+sudo, and a name is data, never a command.
+
 ---
 
 ## 0. The design on one page

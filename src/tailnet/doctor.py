@@ -46,9 +46,6 @@ GATED = {"S2": "Q1", "S3": "Q3", "S5": "Q4", "S7b": "Q20", "S8": "Q23"}
 # Verification-discipline's drift rule: an answer older than this is assumed stale.
 SETTLE_AFTER = timedelta(days=30)
 
-# Hostnames come from the API, which takes them from each device's own OS, so one is never
-# trusted inside a shell block MC runs: anything but these characters becomes "?".
-_SAFE_COMMENT = re.compile(r"[^A-Za-z0-9._-]")
 _NODE_ID = re.compile(r"[A-Za-z0-9]+")
 # The here-document's end marker. It is quoted, so the shell expands nothing inside, and a
 # sanitised comment cannot spell it on a line of its own.
@@ -282,8 +279,9 @@ def questions(state):
 
 def _comment(device):
     """A device's hostname for a comment in MC's shell, reduced to characters that cannot
-    end the here-document or start a command."""
-    return _SAFE_COMMENT.sub("?", device.hostname or "?")
+    end the here-document or start a command: hostnames come from each device's own OS by way
+    of the API, so diagnose's on-host block and this one share one rule."""
+    return diagnose.safe_name(device.hostname)
 
 
 def protected_proposal(devices, self_device, path, now):

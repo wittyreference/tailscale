@@ -34,6 +34,11 @@ SSH_MODES = ("accept", "check")
 # Anything else, an address or a wildcard included, is refused.
 _IDENTITY = re.compile(r"tag:[A-Za-z0-9][A-Za-z0-9-]*|[^\s@*]+@[^\s@*]+")
 
+# Hostnames come from the API, which takes them from each device's own OS, so one is never
+# trusted inside a block MC runs: a newline would end a comment and start a command. Anything
+# but these characters becomes "?"; doctor's protected-list block uses the same rule.
+_UNSAFE_NAME = re.compile(r"[^A-Za-z0-9._-]")
+
 # The verdicts that mean the port is reachable (§15.2 step 7); every other one exits 8.
 REACHABLE = frozenset({"OPEN", "ADMITTED_CHECK_MODE", "ALLOWED"})
 # Verdicts decided before any probe or policy call: the rest of the ladder is not run for
@@ -307,6 +312,12 @@ def verdict(facts):
     return Verdict("INCONCLUSIVE", _inconclusive(facts, layer))
 
 
+def safe_name(text):
+    """A device name reduced to characters that can neither end a shell comment nor start a
+    command, for text MC pastes into a terminal."""
+    return _UNSAFE_NAME.sub("?", text or "?")
+
+
 def _identity(text):
     """Whether text is a source identity a test may run as: a tag, or a user's email."""
     return isinstance(text, str) and _IDENTITY.fullmatch(text) is not None
@@ -538,7 +549,7 @@ def on_host_block(dest, port, source, source_ip, *, ts_ssh=False):
     the SYN after the filter, so tailscale0 and the host firewall never see it (A51).
     """
     lines = [
-        f"# On {dest}, while the agent retries from {source}:",
+        f"# On {safe_name(dest)}, while the agent retries from {safe_name(source)}:",
         ("tailscale metrics print | grep -E 'inbound_dropped_packets_total'   "
          "# reason=\"acl\" rising → Tailscale policy drop (client ≥ 1.78)"),
         ("sudo journalctl -u tailscaled --since '-10min' | "
@@ -907,7 +918,8 @@ def next_steps(code, dest, *, port, user, source, ids, inventory, on_host=False)
     if code == "SAME_DEVICE":
         return [_agent("tailnet device list", "the destination is the source: name another "
                                               "source with --from, or another destination")]
-    name = dest.hostname or dest.node_id
+    # Reduced once, so every step that names the host, the terminal ones included, is safe.
+    name = safe_name(dest.hostname or dest.node_id)
     if code == "KEY_EXPIRED":
         return [{"who": "mc", "needs": "terminal",
                  "do": f"re-authenticate {name} at the host, so it rejoins the tailnet",

@@ -131,7 +131,8 @@ calls made. Human output gives one verdict line per host, then the evidence, eac
 The CLI prints this for the three host-side verdicts (`REFUSED_BY_HOST`, `HOST_SIDE_DROP`,
 `TS_SSH_TIMEOUT_UNEXPLAINED`), and for an `INCONCLUSIVE` reset beside a named drop (DESIGN A53),
 as `next: who=mc needs=terminal`, filled in with the destination,
-this host's name and address, and the port (DESIGN A32); the template below shows port 22. It runs
+this host's name and address, and the port (DESIGN A32), each name reduced to letters, digits,
+`.`, `_` and `-` (DESIGN A54); the template below shows port 22. It runs
 **on the destination**, from a session that can reach it: MC's phone through Termius, or albini →
 pi5 → spec5 over the bench wire (fleet.yaml:86). Hand MC the block in one paste, and say what it
 proves. Beside it the CLI suggests `tailnet diagnose <dest> --from <nodeId>` for each of MC's
@@ -260,7 +261,7 @@ Each is reported as unknown when it matters, never filled in.
 
 Read or fetched 2026-10-26.
 
-- `DESIGN`: `DESIGN.md` §5.2, §5.3, §15, §24, §26 and Amendments A31, A32 and A50-A53 in this repo.
+- `DESIGN`: `DESIGN.md` §5.2, §5.3, §15, §24, §26 and Amendments A31, A32 and A50-A54 in this repo.
 - `mc`, `critic`, `api`, `policy-access`: `docs/research/mc-tailnet.md`, `critic.md`,
   `api-surface.md`, `policy-access.md` (all 2026-10-26).
 - `fleet.yaml`: `/home/user/tailnet-ssh/fleet/fleet.yaml` at `2cab922` (2026-10-10).

