@@ -414,3 +414,18 @@ def test_a_key_shaped_environment_value_is_named_not_shown(cli, tailnet, ready):
     [warning] = [w for w in env["warnings"] if w["code"] == "SECRET_IN_ENVIRONMENT"]
     assert "STRAY_TAILSCALE_KEY" in warning["message"]
     assert checks_of(env)["L4"]["status"] == "WARN"
+
+
+def test_a_write_secret_left_by_an_interrupted_set_is_reported_and_l2_never_claimed(cli, tailnet,
+                                                                                   ready):
+    # No write.json: the set died before it got that far, so only the temp copy is on disk.
+    left = ready.config_dir / ".write.secret.4242.0a1b2c3d.tmp"
+    left.write_text(fixture_secret("left0003") + "\n")
+    left.chmod(0o600)
+    env = envelope(cli("--json", "doctor"))
+    found = checks_of(env)
+    assert found["L4"]["status"] == "WARN"
+    assert left.name in found["L4"]["finding"]
+    assert "tailnet credentials forget write" in found["L4"]["finding"]
+    assert "L2 holds" not in found["L9"]["finding"]
+    assert "L2 does not hold" in found["L9"]["finding"]

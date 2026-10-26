@@ -553,6 +553,7 @@ class _Run:
         self.mode = None
         self.write_meta = None
         self.write_secret = None
+        self.write_leftovers = []
         self.listed = None
         self.protected_state = None
         self.protected_error = None
@@ -732,17 +733,41 @@ class _Run:
                 "shell can; MC removes it, and revokes the key if it is real", "§8.2"))
         return names
 
+    def _leftover_problem(self):
+        """Look for write-secret copies an interrupted `credentials set` left; word any found.
+
+        A set killed between writing its temp file and renaming it (§8.5) leaves the secret
+        under a name nothing reads, so it is found by name alone and never opened (D20).
+        """
+        try:
+            self.write_leftovers = secure_files.temp_leftovers(
+                self.posture.config_dir / "write.secret")
+        except OSError as exc:
+            self.write_leftovers = None
+            return (f"could not list {self.posture.config_dir} for leftover write-secret "
+                    f"copies: {exc.strerror}")
+        if not self.write_leftovers:
+            return None
+        names = ", ".join(path.name for path in self.write_leftovers)
+        return (f"a copy of a write secret that an interrupted `credentials set write` left is "
+                f"on disk ({names}); `tailnet credentials forget write` or the next "
+                "`tailnet credentials set write` removes it")
+
     def credentials_check(self):
         """L4: the read client loads under §8.2; the mode; write.json as metadata only (D20)."""
         stray = self._environment()
+        leftover = self._leftover_problem()
         try:
             self.cred = credentials.load_read(self.posture)
         except LocalError as exc:
             self.cred_error = exc
-            self.add("L4", "FAIL", f"{exc.code}: {exc.message}; the API steps are skipped",
+            finding = f"{exc.code}: {exc.message}; the API steps are skipped"
+            self.add("L4", "FAIL", finding + (f"; {leftover}" if leftover else ""),
                      {"read": exc.code, "environment": stray}, exc.next)
             return
         problems, steps = [], []
+        if leftover:
+            problems.append(leftover)
         try:
             self.write_meta = credentials.load_write_meta(self.posture)
         except LocalError as exc:
@@ -968,6 +993,10 @@ class _Run:
         elif self.write_meta is not None and self.write_secret:
             standing = ("standing posture: write.secret is on disk; `tailnet credentials forget "
                         "write` after a write session makes it session-scoped (L2)")
+        elif self.write_leftovers is None or self.write_leftovers:
+            # A copy left under a temp name is a write secret on disk all the same.
+            standing = ("a write secret may be on disk in a temp copy an interrupted `credentials "
+                        "set write` left (L4), so L2 does not hold until it is removed")
         else:
             standing = ("no write secret on disk: nothing on this host can write to the tailnet "
                         "(L2 holds)")

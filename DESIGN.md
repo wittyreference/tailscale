@@ -834,6 +834,20 @@ not a regular file") and one with a reader fails the existing check; because A21
 every read from waiting on a FIFO, and A13's "the disarm must never wait on the log" has to hold
 for the append too.
 
+**A47. (review, 2026-10-26) finding 10:** §8.5 said the temp file is removed on any error, and
+§8.6's `forget` removed fixed names only; a SIGHUP (a dropped SSH session), SIGTERM or SIGKILL
+between writing `.write.secret.<pid>.<hex>.tmp` and renaming it runs no cleanup, so a copy of
+the write secret stayed on disk that `forget write` never removed and doctor's L9 then called
+"no write secret on disk (L2 holds)". It was changed so that (1) `write_private_atomic` holds
+SIGHUP, SIGTERM and SIGINT from the temp file's creation until the rename is done, so those end
+the process only once the file is whole; (2) `forget` also removes every `.<name>.<pid>.<hex>.tmp`
+beside each file it removes, by name, never following a link, and lists them in `removed`; (3)
+`credentials set` removes them before it writes; and (4) doctor's L4 WARNs on a write-secret
+copy, named only, and L9 then says L2 does not hold; because SIGKILL and a power cut cannot be
+held back, so the copy must also be found afterwards, and §2's L2 row promises no write secret on
+disk between `forget` and the next `set`. `status` still reports `write.secret` by its own name
+only.
+
 ---
 
 ## 0. The design on one page

@@ -340,6 +340,37 @@ def test_forget_read_removes_its_token_cache_and_forget_token_only_the_cache(pos
         credentials.forget(posture, "everything")
 
 
+def test_forget_also_removes_the_temp_copies_an_interrupted_set_left(posture, tmp_path):
+    # A `credentials set` killed between writing its temp file and renaming it (SIGKILL,
+    # power loss) leaves the secret under a temp name; forget must not leave it behind while
+    # every report says the write secret is gone.
+    write_role(posture, "read")
+    write_role(posture, "write")
+    config = posture.config_dir
+    secret_copy = put(config / ".write.secret.4242.0a1b2c3d.tmp", "test-client-left0001\n")
+    meta_copy = put(config / ".write.json.4242.0a1b2c3d.tmp", "{}")
+    # A leftover name that is a symlink is removed as a link, never followed.
+    elsewhere = put(tmp_path / "elsewhere", "keep")
+    (config / ".write.secret.7.deadbeef.tmp").symlink_to(elsewhere)
+    put(config / ".write.secret.notes", "not a temp file of ours")
+    result = credentials.forget(posture, "write")
+    assert result.removed == ("write.secret", "write.json", ".write.secret.4242.0a1b2c3d.tmp",
+                              ".write.secret.7.deadbeef.tmp", meta_copy.name)
+    assert not secret_copy.exists() and elsewhere.read_text() == "keep"
+    assert sorted(p.name for p in config.iterdir()) == [".write.secret.notes", "read.json",
+                                                        "read.secret"]
+    assert audit.last(posture, "credential.forget")["removed"] == list(result.removed)
+
+
+def test_store_first_clears_the_temp_copies_an_interrupted_set_left(posture):
+    left = put(posture.config_dir / ".write.secret.4242.0a1b2c3d.tmp", "test-client-left0002\n")
+    cred = credentials.typed(posture, "write", "kTyped02CNTRL", fixture_secret("typed0045"))
+    credentials.store(posture, cred, granted_scope=WRITE_SCOPE, set_at="2026-10-26T20:00:00Z",
+                      tags=("tag:fleet",), tags_source="typed")
+    assert sorted(p.name for p in posture.config_dir.iterdir()) == ["write.json", "write.secret"]
+    assert not left.exists()
+
+
 def test_forget_never_waits_on_the_audit_log(posture):
     # Removing power must not depend on recording it: a log that cannot be written is
     # reported, and the files are gone anyway.

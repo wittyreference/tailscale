@@ -4,7 +4,9 @@
 import errno
 import fcntl
 import os
+import re
 import secrets
+import signal
 import stat
 from contextlib import contextmanager
 from pathlib import Path
@@ -27,6 +29,11 @@ _PRIVATE_MASK = 0o077
 # A directory only needs its write bits closed: whoever can write it can rename or replace
 # the files inside, while reading a listing exposes no contents (§8.2 item 6).
 _DIRECTORY_MASK = 0o022
+# SIGHUP (MC's SSH session drops) and SIGTERM end the CLI with no except or finally run;
+# SIGINT is held with them so a Ctrl-C lands after the rename rather than inside it. Held
+# back while a file is under its temp name, so the process ends only once the file is
+# whole, never leaving a copy of a secret under a name nothing removes.
+_DEFERRED = {signal.SIGHUP, signal.SIGTERM, signal.SIGINT}
 
 
 def check_private_stat(st, euid):
@@ -206,15 +213,62 @@ def _read_at_most(fd, limit):
     return b"".join(chunks)
 
 
+def _temp_pattern(path):
+    """What write_private_atomic names the temp file for `path`: `.<name>.<pid>.<8 hex>.tmp`."""
+    return re.compile(rf"\.{re.escape(path.name)}\.[0-9]+\.[0-9a-f]{{8}}\.tmp")
+
+
+def temp_leftovers(path):
+    """The temp files beside `path` that an interrupted write_private_atomic left, sorted.
+
+    A SIGKILL or a power cut between writing the temp file and renaming it runs no cleanup,
+    so a copy of a secret can stay under its temp name; forget, set and doctor look for it
+    by that name. Nothing is opened or followed. A missing directory has none.
+    """
+    path = Path(path)
+    pattern = _temp_pattern(path)
+    try:
+        names = os.listdir(path.parent)
+    except FileNotFoundError:
+        return []
+    return sorted(path.parent / name for name in names if pattern.fullmatch(name))
+
+
+def remove_temp_leftovers(path):
+    """Unlink every temp file temp_leftovers(path) finds; return the names removed.
+
+    unlink removes a symlink itself, never what it points at. Any failure but the file
+    having gone already raises OSError for the caller to word.
+    """
+    removed = []
+    for leftover in temp_leftovers(path):
+        try:
+            os.unlink(leftover)
+        except FileNotFoundError:
+            continue
+        removed.append(leftover.name)
+    return removed
+
+
 def write_private_atomic(path, data, *, code="CREDENTIAL_UNSAFE"):
     """Replace `path` with `data` as a 0600 file, all at once (§8.5).
 
     Readers see the old file or the new one, never a half-written secret: the bytes go to
     an exclusive temp file in the same directory, are synced, and are renamed over the
     target. A directory others can write is refused first, because they could swap the
-    file after it lands. On any error the temp file is removed and the error re-raised.
+    file after it lands. On any error the temp file is removed and the error re-raised, and
+    the signals that would end the process without that cleanup wait until it is done.
     """
-    path = Path(path)
+    previous = signal.pthread_sigmask(signal.SIG_BLOCK, _DEFERRED)
+    try:
+        _write_atomic(Path(path), data, code)
+    finally:
+        # A held signal is delivered here, once the file is whole under its own name.
+        signal.pthread_sigmask(signal.SIG_SETMASK, previous)
+
+
+def _write_atomic(path, data, code):
+    """write_private_atomic's work, run while the ending signals are held back."""
     dir_fd = os.open(path.parent, _DIR_FLAGS)
     try:
         problems = _parent_problems(path.parent, os.fstat(dir_fd), os.geteuid())

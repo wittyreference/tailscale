@@ -405,6 +405,10 @@ def store(posture, cred, *, granted_scope, set_at, tags=None, tags_source=None):
     if role == "write":
         doc.update(tags=list(tags or ()), tags_source=tags_source)
     try:
+        # A copy an interrupted earlier set left under a temp name goes before anything new
+        # is written, so re-running the set is how MC clears it.
+        for path in (secret_path, doc_path):
+            secure_files.remove_temp_leftovers(path)
         secure_files.write_private_atomic(secret_path, (cred.secret + "\n").encode("utf-8"))
         secure_files.write_private_atomic(doc_path, json.dumps(doc).encode("utf-8"))
     except OSError as exc:
@@ -448,6 +452,16 @@ def forget(posture, role):
                              f"could not remove {path}: {exc.strerror}; the {role} credential "
                              "is still in place") from None
         removed.append(name)
+    for name in _FORGET[role]:
+        # An interrupted set can leave a copy under a temp name (§8.5); a forget that left
+        # it would say a secret is gone while it is still on disk.
+        path = posture.config_dir / name
+        try:
+            removed.extend(secure_files.remove_temp_leftovers(path))
+        except OSError as exc:
+            raise LocalError("CREDENTIAL_UNSAFE",
+                             f"could not remove the temp copies an interrupted set left beside "
+                             f"{path}: {exc.strerror}; MC removes them by hand") from None
     try:
         audit.append(posture, {"event": "credential.forget", "role": role, **facts,
                                "removed": removed})

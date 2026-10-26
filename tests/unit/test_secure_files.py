@@ -4,6 +4,7 @@
 import fcntl
 import json
 import os
+import signal
 import stat
 import subprocess
 import sys
@@ -343,6 +344,41 @@ def test_a_parent_that_is_not_a_directory_is_refused_not_a_crash(tmp_path):
     exc = refused(blocker / "read.json")
     assert exc.code == "CREDENTIAL_UNSAFE"
     assert str(blocker / "read.json") in exc.message
+
+
+INTERRUPTED = """
+import os, signal, sys
+from tailnet import secure_files
+
+def interrupt(event, args):
+    # The signal arrives after the secret is in its temp file, before the rename: SIGHUP
+    # when the SSH session from MC's phone drops, and the kernel ends the process at once.
+    if event == "os.rename" and str(args[0]).endswith(".tmp"):
+        os.kill(os.getpid(), getattr(signal, sys.argv[2]))
+
+sys.addaudithook(interrupt)
+secure_files.write_private_atomic(sys.argv[1], b"held-until-renamed\\n")
+"""
+
+
+@pytest.mark.parametrize("signame", ["SIGHUP", "SIGTERM", "SIGKILL"])
+def test_a_signal_between_writing_and_renaming_never_strands_an_unfound_copy(tmp_path, signame):
+    target = tmp_path / "write.secret"
+    env = {"PYTHONPATH": str(SRC), "PATH": os.environ.get("PATH", "")}
+    child = subprocess.run([sys.executable, "-c", INTERRUPTED, str(target), signame], env=env,
+                           capture_output=True, timeout=60, check=False)
+    assert child.returncode == -getattr(signal, signame), child.stderr
+    if signame != "SIGKILL":
+        # Held back until the rename: the process still ends, but with the file whole.
+        assert [path.name for path in tmp_path.iterdir()] == ["write.secret"]
+        assert target.read_bytes() == b"held-until-renamed\n"
+        return
+    # SIGKILL cannot be held: the copy stays under its temp name, and is found by that name.
+    [left] = secure_files.temp_leftovers(target)
+    assert [path.name for path in tmp_path.iterdir()] == [left.name]
+    assert left.read_bytes() == b"held-until-renamed\n"
+    assert secure_files.remove_temp_leftovers(target) == [left.name]
+    assert list(tmp_path.iterdir()) == []
 
 
 def test_a_log_can_be_checked_for_appending_without_writing_to_it(tmp_path, syscalls):
