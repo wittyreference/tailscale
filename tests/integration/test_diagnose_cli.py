@@ -44,7 +44,8 @@ class Diag:
 
     Validate answers by the body's shape, as the server picks its mode [api §6.3]: an array
     is a network test, answered from `network` by its source; an object is an ssh
-    candidate, answered from `ssh` by (source, mode). Both pass unless a test says otherwise.
+    candidate, answered from `ssh` by (source, mode). Both pass unless a test says otherwise;
+    an answer given as (status, body) is sent with that status instead of 200.
     """
 
     def __init__(self, loopback):
@@ -79,8 +80,9 @@ class Diag:
             [test] = doc["sshTests"]
             mode = "accept" if "accept" in test else "check"
             answer = self.ssh.get((test["src"], mode), {})
+        status, answer = answer if isinstance(answer, tuple) else (200, answer)
         # The seam records a request before answering it, so the nth validate is REQ-validate-n.
-        return 200, {"X-Tailscale-Request-Id": f"REQ-validate-{len(self.validates())}"}, answer
+        return status, {"X-Tailscale-Request-Id": f"REQ-validate-{len(self.validates())}"}, answer
 
     def validates(self):
         """Every validate body posted so far, parsed, in order."""
@@ -221,6 +223,56 @@ def test_from_mode_reports_a_policy_drop(cli, diag, configured):
               if step.get("run", "").startswith("tailnet policy draft")]
     assert drafts and "mc@example.com" in drafts[0]["why"]
     assert ("GET", ACL) not in diag.calls()
+
+
+def drafts(env):
+    """The `tailnet policy draft` steps an envelope's next holds."""
+    return [step for step in env["next"] if step.get("run", "").startswith("tailnet policy draft")]
+
+
+@pytest.mark.parametrize("answer", [
+    {"message": "test(s) failed",
+     "data": [{"user": "mc@example.com", "errors": ["address 100.64.0.13:22: unexpected"]}]},
+    {"message": "test(s) failed"},
+    (400, {"message": "could not parse the tests"}),
+], ids=["another-line", "message-without-data", "http-400"])
+def test_a_failure_that_names_no_drop_is_no_answer_never_a_policy_drop(cli, diag, configured,
+                                                                       answer):
+    # A32 (4): only `want: Accept, got: Drop` is a drop. Anything else says nothing about the
+    # port, and reading it as one would have the agent draft a grant on no evidence.
+    diag.device("pi5")["sshEnabled"] = False
+    diag.network["mc@example.com"] = answer
+    result = cli("--json", "diagnose", "pi5", "--from", "albini")
+    env = envelope(result)
+    assert result.returncode == 8
+    [dest] = env["data"]["destinations"]
+    assert [test["allowed"] for test in dest["network_test"]] == [None]
+    assert dest["verdict"] == "INCONCLUSIVE"
+    assert drafts(env) == []
+
+
+def test_a_tagged_source_is_dropped_only_when_every_tag_is(cli, diag, configured):
+    # A tagged source is the union of its tags [pol (b)], so one tag's drop beside another
+    # tag's unanswered test is no drop: that other tag could be the one a rule admits.
+    diag.device("pi5")["sshEnabled"] = False
+    diag.device("claude-factory")["tags"] = ["tag:dev", "tag:lab"]
+    diag.network["tag:dev"] = drop("tag:dev", "100.64.0.13:22")
+    diag.network["tag:lab"] = {"message": "test(s) failed"}
+    result = cli("--json", "diagnose", "pi5", "--from", "claude-factory")
+    env = envelope(result)
+    [dest] = env["data"]["destinations"]
+    assert [(t["src"], t["allowed"]) for t in dest["network_test"]] == [
+        ("tag:dev", False), ("tag:lab", None)]
+    assert (result.returncode, dest["verdict"]) == (8, "INCONCLUSIVE")
+    assert drafts(env) == []
+    # Every tag dropped by name: now it is the policy.
+    diag.network["tag:lab"] = drop("tag:lab", "100.64.0.13:22")
+    result = cli("--json", "diagnose", "pi5", "--from", "claude-factory")
+    env = envelope(result)
+    [dest] = env["data"]["destinations"]
+    assert [t["allowed"] for t in dest["network_test"]] == [False, False]
+    assert (result.returncode, dest["verdict"]) == (8, "POLICY_DROP")
+    assert drafts(env)
 
 
 def test_a_tailscale_ssh_destination_posts_an_ssh_candidate_with_a_host_alias(cli, diag,
