@@ -7,9 +7,14 @@ from pathlib import Path
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
 
 
+def raw_text(kind, name):
+    """A fixture file's text exactly as written, for parsers that must cope with its formatting."""
+    return (FIXTURES / kind / f"{name}.json").read_text(encoding="utf-8")
+
+
 def load(kind, name):
     """A fixture's parsed JSON, freshly read so a test may change its copy: kind is the directory."""
-    return json.loads((FIXTURES / kind / f"{name}.json").read_text(encoding="utf-8"))
+    return json.loads(raw_text(kind, name))
 
 
 def body(kind, name):

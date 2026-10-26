@@ -274,6 +274,21 @@ in the way, a line holding two names is a typo the CLI must not settle by guessi
 behind a deny rule so its text should not reach a transcript through an error, and §11.4 says
 self is always protected against tag writes, listed or not.
 
+**A20. (build, 2026-10-26)** §6 gave `localts` as `status_json(timeout)`, `ping(ip, kind,
+timeout)`, `get_pref(name)` and `version()`, and `selfnode` as `SelfNode(known, device, source,
+id_agrees, reason)` from `resolve_self`; it was built with the posture first on every `localts`
+call (A12) and a timeout on all four; with `localts.Failed(reason)` for a run that gives no answer
+(a timeout, a binary that cannot start, a non-zero exit where one means no answer) and
+`localts.NotInTestPosture`, a `RuntimeError`, for any call in test posture; with `ping` taking
+an IP address only, sent as `ping --<kind> --c=1 --timeout=<N>s <ip>`; and with `SelfNode`
+carrying a sixth field, `refusal` (`SELF_UNKNOWN` or `SELF_LINE_DISAGREES`), beside the pure
+`decide(local, devices, protected)` and `from_line(devices, protected)` that `resolve_self` calls;
+because a hung daemon must not stall a command; §5.5 has no code for a local run that failed, and
+an unknown self is the fail-closed answer; a test-posture call is a bug, never a user error, so
+it ends as exit 1 rather than as a code an agent might act on; the probe ladder addresses hosts by
+IP (§3.1); the guard must know which of its two self codes applies; and the production join must
+be testable without running tailscale, which no test may do.
+
 ---
 
 ## 0. The design on one page

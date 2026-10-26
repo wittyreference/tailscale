@@ -16,12 +16,16 @@ netguard.install()
 class Syscalls:
     """The audited file calls made while one test runs, in order, as (event, args) pairs.
 
-    Python raises an audit event for os.open ("open", with the flags), fcntl.flock, unlink
-    and rename. Recording them lets a test check how a file was really opened, locked and
-    removed (append-only, no follow, secret before metadata) without replacing any of it.
+    Python raises an audit event for os.open ("open", with the flags), fcntl.flock, unlink,
+    rename and every way of starting a process. Recording them lets a test check how a file
+    was really opened, locked and removed (append-only, no follow, secret before metadata),
+    and that a code path started no program, without replacing any of it.
     """
 
-    WATCHED = frozenset({"open", "fcntl.flock", "os.remove", "os.rename"})
+    # The events that start another program, whichever way it is started.
+    PROCESS_EVENTS = frozenset({"subprocess.Popen", "os.exec", "os.posix_spawn", "os.spawn",
+                                "os.system"})
+    WATCHED = frozenset({"open", "fcntl.flock", "os.remove", "os.rename"}) | PROCESS_EVENTS
 
     def __init__(self):
         self.events = []
@@ -35,6 +39,10 @@ class Syscalls:
                    for p in paths):
                 hits.append((event, args))
         return hits
+
+    def processes(self):
+        """Every attempt to start a program, in order: proof a code path ran nothing."""
+        return [(event, args) for event, args in self.events if event in self.PROCESS_EVENTS]
 
     def open_flags(self, basename):
         """The flags of every os.open of a file with this basename, in order."""

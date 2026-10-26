@@ -206,3 +206,37 @@ def test_only_api_and_tokens_issue_post_requests():
             if clients & set(names):
                 importers.add(path.name)
     assert importers == {"http.py"}
+
+
+# Every way the os module starts another program. A module that touches none of these and
+# never imports subprocess cannot run tailscale, however it spells the name.
+OS_PROCESS_CALLS = re.compile(r"(system|popen|exec\w*|spawn\w*|posix_spawnp?|fork\w*)")
+
+
+def starts_programs(tree):
+    """Say whether a module imports subprocess or reaches an os function that starts a program."""
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import) and any(a.name.split(".")[0] == "subprocess"
+                                                for a in node.names):
+            return True
+        if isinstance(node, ast.ImportFrom) and node.level == 0 and node.module == "subprocess":
+            return True
+        if isinstance(node, ast.ImportFrom) and node.module == "os" and any(
+                OS_PROCESS_CALLS.fullmatch(a.name) for a in node.names):
+            return True
+        if (isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name)
+                and node.value.id == "os" and OS_PROCESS_CALLS.fullmatch(node.attr)):
+            return True
+    return False
+
+
+def test_only_localts_runs_the_tailscale_binary():
+    # localts is the one place tailscale runs, and it refuses in test posture (§7.1). Netguard
+    # catches a run at test time; this catches the code that could make one before it exists.
+    modules = sorted(PACKAGE.rglob("*.py"))
+    runners = {path.name for path in modules if starts_programs(parsed(path))}
+    assert runners == {"localts.py"}
+    # The check itself sees each way in.
+    for source in ("import subprocess", "from subprocess import run", "os.execv('x', [])",
+                   "from os import posix_spawn", "os.system('x')"):
+        assert starts_programs(ast.parse(source)), source
