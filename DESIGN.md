@@ -233,6 +233,20 @@ status and the body; a single-client read token can write, so a bug that passed 
 must fail loudly; an empty list would strip every tag, with results the spec marks unverified;
 and either ID ends up in a request path.
 
+**A17. (build, 2026-10-26)** §5.1 refuses "the literal placeholder `<why>`"; §5.4 says `--json`
+prints exactly one envelope "error or not" and names no posture for a run whose override was
+refused; and §5.3 has exit 1 print a redacted message; it was built so that a `--reason`
+containing `<why>` anywhere, in any case, is `REASON_PLACEHOLDER`, a blank one is
+`REASON_REQUIRED`, and one over 200 characters is `USAGE`, checked whenever `--reason` is given.
+Every argparse error raises `UsageError` (`USAGE`, with `next` pointing at that command's
+`--help`) instead of printing and exiting, and `--json` is read from argv before parsing. A
+refused override gives an envelope with `"posture": "unknown"`, and `main` turns any other
+exception into an `INTERNAL` envelope, printing the redacted traceback only with
+`TAILNET_DEBUG=1`; because a reason that still carries the placeholder was pasted unedited,
+whatever surrounds it; argparse's own error path prints usage and exits before any envelope
+exists; a refused override has decided neither posture and must not be reported as either; and
+the excepthook alone cannot keep the one-envelope rule.
+
 ---
 
 ## 0. The design on one page
