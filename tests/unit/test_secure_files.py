@@ -359,6 +359,57 @@ def test_a_log_can_be_checked_for_appending_without_writing_to_it(tmp_path, sysc
     assert caught.value.code == "AUDIT_UNWRITABLE" and "mode 0644" in caught.value.message
 
 
+def bounded(call, unblock, seconds=5):
+    """Run `call` in a thread; return (what it raised, whether it had to be unblocked).
+
+    A regression here would hang the suite, so a call still running after `seconds` is
+    released by `unblock` and reported, rather than waited on forever.
+    """
+    raised = []
+
+    def attempt():
+        """Keep whatever the call raised for the test thread to judge."""
+        try:
+            call()
+        except BaseException as exc:  # noqa: BLE001 - every outcome goes back to the test
+            raised.append(exc)
+
+    worker = threading.Thread(target=attempt, daemon=True)
+    worker.start()
+    worker.join(seconds)
+    hung = worker.is_alive()
+    if hung:
+        unblock()
+        worker.join(seconds)
+    return raised, hung
+
+
+@pytest.mark.parametrize("call", [
+    lambda log: secure_files.append_locked(log, b"{}\n"),
+    lambda log: secure_files.check_appendable(log),
+], ids=["append_locked", "check_appendable"])
+def test_a_fifo_at_the_log_path_is_refused_without_waiting_for_a_reader(tmp_path, call):
+    # Opening a FIFO for writing waits for a reader, before the regular-file check can run:
+    # every token mint, forget and --apply (C9) would hang on one planted at the log path.
+    log = tmp_path / "audit.jsonl"
+    os.mkfifo(log, 0o600)
+    readers = []
+
+    def unblock():
+        """Open the read end, which lets a blocked writer's open return."""
+        readers.append(os.open(log, os.O_RDONLY | os.O_NONBLOCK))
+
+    try:
+        raised, hung = bounded(lambda: call(log), unblock)
+    finally:
+        for fd in readers:
+            os.close(fd)
+    assert not hung, "opening the log waited for a FIFO reader"
+    [exc] = raised
+    assert isinstance(exc, errors.LocalError) and exc.code == "AUDIT_UNWRITABLE"
+    assert "not a regular file" in exc.message
+
+
 def test_the_apply_lock_is_exclusive_and_never_waits(tmp_path):
     lock = tmp_path / "apply.lock"
     with secure_files.lock_exclusive(lock, code="AUDIT_UNWRITABLE"):

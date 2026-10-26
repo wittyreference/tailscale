@@ -825,6 +825,15 @@ short of its declared length is now `http.NoResponse` `API_BAD_RESPONSE` (exit 4
 because nothing the CLI cannot read whole may read as an answer (A27), and a write's outcome
 still comes from its re-read.
 
+**A46. (review, 2026-10-26) finding 9:** §13.1 and A11 opened the audit log `O_APPEND` and ran
+the §8.2 checks on the opened file; the open itself waited for a reader when a FIFO sat at the
+log's path, so every token mint, `credentials forget` (after it had removed the files) and
+`--apply` at C9 hung before the regular-file check could refuse it. The log is now opened
+`O_NONBLOCK` as well, so a FIFO with no reader is refused at once as `AUDIT_UNWRITABLE` ("it is
+not a regular file") and one with a reader fails the existing check; because A21 already keeps
+every read from waiting on a FIFO, and A13's "the disarm must never wait on the log" has to hold
+for the append too.
+
 ---
 
 ## 0. The design on one page

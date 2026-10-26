@@ -13,11 +13,13 @@ from tailnet.errors import LocalError
 
 # Every open closes on exec, so no file this module opens can leak into a child process
 # (localts runs tailscale). O_NONBLOCK makes opening a FIFO return at once rather than wait
-# for a writer; on a regular file it changes nothing.
+# for a writer, or, opened for appending, fail with ENXIO rather than wait for a reader; on
+# a regular file it changes nothing, and flock's waiting is set by LOCK_NB alone.
 _READ_FLAGS = os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC | os.O_NONBLOCK
 _DIR_FLAGS = os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC
 _CREATE_FLAGS = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC
-_APPEND_FLAGS = os.O_WRONLY | os.O_APPEND | os.O_CREAT | os.O_NOFOLLOW | os.O_CLOEXEC
+_APPEND_FLAGS = (os.O_WRONLY | os.O_APPEND | os.O_CREAT | os.O_NOFOLLOW | os.O_CLOEXEC
+                 | os.O_NONBLOCK)
 
 # Any group or other bit refuses a file, not only the read bits: a group-writable file can
 # be swapped for one an attacker wrote (§8.2 item 4).
@@ -252,6 +254,9 @@ def _open_append(path, code):
     try:
         fd = os.open(path, _APPEND_FLAGS, 0o600)
     except OSError as exc:
+        if exc.errno == errno.ENXIO:
+            # A FIFO with no reader (or a device with nothing behind it): say what MC sees.
+            raise _refuse("append to", path, ["it is not a regular file"], code) from None
         raise LocalError(code, f"cannot append to {path}: {exc.strerror}") from None
     problems = check_private_stat(os.fstat(fd), os.geteuid())
     if problems:
