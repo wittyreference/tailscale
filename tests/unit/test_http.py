@@ -192,6 +192,23 @@ def test_an_error_body_cut_by_a_reset_is_no_response_that_may_have_landed(loopba
     assert len(loopback.requests) == 1
 
 
+@pytest.mark.parametrize("status", [200, 502])
+@pytest.mark.parametrize("call", [get, post_write], ids=["read", "write"])
+def test_a_body_cut_short_of_its_content_length_is_refused_not_taken_as_whole(loopback, transport,
+                                                                             call, status):
+    # A clean close partway through: a capped read returns what came without the stdlib's
+    # IncompleteRead, and a cut policy would be printed as the live one with exit 0.
+    reply = (status, {"X-Tailscale-Request-Id": "REQ-c2"}, Cut(b'{"message": "whole"}', 7))
+    loopback.route("GET", API + "/tailnet/-/devices", reply)
+    loopback.route("POST", API + "/device/n1/key", reply)
+    exc = failure(call, transport)
+    assert (exc.exit, exc.code, exc.sent) == (4, "API_BAD_RESPONSE", True)
+    assert "13 bytes short" in exc.message
+    # Nothing arrived at all is cut short too: an empty 200 must not read as an empty answer.
+    loopback.route("GET", API + "/tailnet/-/acl", (200, {}, Cut(b"{}", 0)))
+    assert failure(get, transport, "/tailnet/-/acl").code == "API_BAD_RESPONSE"
+
+
 def test_a_connect_failure_before_send_is_reported_as_not_sent(tmp_path):
     # A port nothing listens on: the connection is refused before any byte is sent.
     with socket.socket() as probe:

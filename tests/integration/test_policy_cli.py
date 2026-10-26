@@ -10,6 +10,7 @@ from pathlib import Path
 import pytest
 from credfiles import access_token, token_reply, write_role
 from fixturefiles import body, raw_bytes
+from loopback import Cut
 
 API = "/api/v2"
 TOKEN = API + "/oauth/token"
@@ -95,6 +96,18 @@ def test_policy_get_prints_hujson_byte_for_byte_and_the_raw_etag_on_stderr(cli, 
                      re.MULTILINE)
     assert f'etag: e0b2816b418 (raw header: {ETAG})' in err
     assert f"sha256: {sha256(live.hujson)}" in err
+
+
+def test_a_policy_cut_short_is_never_served_as_the_live_policy(cli, live, loopback, configured):
+    # The connection closes cleanly partway through: what arrived is not the live policy, so
+    # nothing is printed as it, and no hash or ETag vouches for it.
+    loopback.route("GET", ACL, (200, {"ETag": ETAG, "Content-Type": "application/hujson"},
+                                Cut(live.hujson, 110)))
+    result = cli("policy", "get", text=False)
+    assert result.returncode == 4, result.stderr
+    assert result.stdout.startswith(b"API: API_BAD_RESPONSE: GET /tailnet/-/acl: the body ended ")
+    assert live.hujson[:110] not in result.stdout
+    assert b"sha256" not in result.stdout + result.stderr
 
 
 def test_policy_get_json_envelope_carries_the_text_and_both_etag_forms(cli, live, configured):
@@ -476,6 +489,17 @@ def test_policy_test_posts_one_array_against_live_and_exits_8_on_a_drop(cli, liv
     assert (env["exit"], env["data"]["reason"]) == (8, "HTTP 400")
     assert "could not parse the tests (HTTP 400): invalid test: unknown host" in \
         env["error"]["message"]
+
+
+def test_a_test_answer_cut_before_its_body_is_no_pass(cli, live, configured):
+    # A failed test comes back as a 200 with a body [critic R2]; a pass is an empty 200. A
+    # body that never arrived must not read as the empty one.
+    live.answer = (200, {}, Cut({"message": "test(s) failed", "data": []}, 0))
+    result = cli("--json", *SSH_QUESTION)
+    env = envelope(result)
+    assert (result.returncode, env["outcome"], env["error"]["code"]) == (4, "error",
+                                                                         "API_BAD_RESPONSE")
+    assert "PASS" not in cli(*SSH_QUESTION).stdout
 
 
 def test_policy_test_arguments_are_refused_before_any_request(cli, live, loopback, configured):

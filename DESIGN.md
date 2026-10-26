@@ -816,6 +816,15 @@ instead of 4. The error body is now read after that clause, under the same mappi
 because §10.2 already treats a reset after sending as a 5xx whose re-read decides it, and
 invariant 6 needs the line.
 
+**A45. (review, 2026-10-26) finding 15:** §10.1 capped response bodies at 8 MiB and said
+nothing of a body shorter than its `Content-Length`; the capped read took one cut short by a
+clean close as whole, because `read(n)` returns what came where a bare `read()` raises
+`IncompleteRead`, so `policy get` printed a cut policy with its hash and the live ETag at exit 0,
+and a `/acl/validate` 200 cut before its body read as an empty one, a PASS. A body that ends
+short of its declared length is now `http.NoResponse` `API_BAD_RESPONSE` (exit 4), `sent: true`;
+because nothing the CLI cannot read whole may read as an answer (A27), and a write's outcome
+still comes from its re-read.
+
 ---
 
 ## 0. The design on one page

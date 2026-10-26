@@ -147,7 +147,7 @@ def body_says(body):
 
 
 def _read_capped(reply, where):
-    """Read a response body, refusing one larger than MAX_BODY.
+    """Read a response body, refusing one larger than MAX_BODY or shorter than it declared.
 
     The response has arrived, so the request was sent: a refusal here says so, and a write
     takes its outcome from the re-read like any other unanswered write.
@@ -156,6 +156,16 @@ def _read_capped(reply, where):
     while True:
         chunk = reply.read(MAX_BODY + 1 - total)
         if not chunk:
+            # A sized read() returns what came when the connection closes early, where a bare
+            # read() raises IncompleteRead, so the cap dropped the stdlib's only length
+            # check. `length` is http.client's count of the bytes still owed: None without a
+            # Content-Length, and a chunked body that breaks off raises on its own.
+            short = getattr(reply, "length", None)
+            if isinstance(short, int) and short > 0:
+                raise NoResponse("API_BAD_RESPONSE",
+                                 f"{where}: the body ended {short} bytes short of its "
+                                 "Content-Length; refused, not read as whole",
+                                 sent=True, where=where)
             return b"".join(chunks)
         chunks.append(chunk)
         total += len(chunk)
