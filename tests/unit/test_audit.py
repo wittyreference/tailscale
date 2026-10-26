@@ -160,3 +160,17 @@ def test_a_state_directory_that_cannot_be_made_is_audit_unwritable(posture):
         audit.append(posture, {"event": "write"}, argv=[])
     assert caught.value.code == "AUDIT_UNWRITABLE"
     assert str(posture.state_dir) in caught.value.message
+
+
+def test_the_log_is_checked_before_a_write_without_adding_a_line(posture):
+    # C9 runs before a write is sent; it must not leave a line of its own.
+    audit.check_writable(posture)
+    assert (posture.state_dir / "audit.jsonl").read_bytes() == b""
+    assert stat.S_IMODE(posture.state_dir.stat().st_mode) == 0o700
+    audit.append(posture, {"event": "write"}, argv=[])
+    audit.check_writable(posture)
+    assert len(log_lines(posture)) == 1
+    (posture.state_dir / "audit.jsonl").chmod(0o640)
+    with pytest.raises(errors.LocalError) as caught:
+        audit.check_writable(posture)
+    assert caught.value.code == "AUDIT_UNWRITABLE"

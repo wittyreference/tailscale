@@ -60,15 +60,33 @@ def append(posture, event, *, argv=None):
     # json.dumps escapes newlines inside strings, so the record is one line however its
     # fields were typed.
     line = redact(json.dumps(record)) + "\n"
-    # Parent directories get the default mode; the state directory itself is 0700 (§13.1),
-    # and a umask can only narrow that.
+    state_dir(posture)
+    secure_files.append_locked(log_path(posture), line.encode("utf-8"), code=_CODE)
+
+
+def state_dir(posture):
+    """The posture's state directory, made 0700 if it is missing; the log and apply lock live here.
+
+    Parent directories get the default mode; the state directory itself is 0700 (§13.1), and
+    a umask can only narrow that.
+    """
     try:
         posture.state_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
     except OSError as exc:
         # The same answer as a log that will not open: a write that cannot be recorded is
         # not sent (C9), whichever part of the path is in the way.
         raise LocalError(_CODE, f"cannot create {posture.state_dir}: {exc.strerror}") from None
-    secure_files.append_locked(log_path(posture), line.encode("utf-8"), code=_CODE)
+    return posture.state_dir
+
+
+def check_writable(posture):
+    """C9: show the log would take a line now, without writing one; AUDIT_UNWRITABLE if not.
+
+    The write flow asks this before it sends anything, so a write is never sent that the
+    narrative could not record (§12.2, invariant 6).
+    """
+    state_dir(posture)
+    secure_files.check_appendable(log_path(posture), code=_CODE)
 
 
 def _lines_newest_first(fd, size):

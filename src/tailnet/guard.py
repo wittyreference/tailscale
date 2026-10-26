@@ -318,7 +318,7 @@ def _self_known(ctx):
     else:
         step = {"who": "agent", "run": f"{PROG} status",
                 "why": "shows the local view and why self is unknown"}
-    return _fail("C3", code, f"apply would be refused: self unknown ({me.reason})", step)
+    return _fail("C3", code, f"self unknown ({me.reason})", step)
 
 
 def _answered(ctx):

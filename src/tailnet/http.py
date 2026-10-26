@@ -44,12 +44,14 @@ class NoResponse(ApiError):
 
     Reads only need the exit code. A write needs `sent` (§10.2, §12.6): False means the API
     cannot have acted, so the write is reported rejected and not sent; True means it may
-    have landed, so its outcome comes from the re-read and it is never re-applied.
+    have landed, so its outcome comes from the re-read and it is never re-applied. `where`
+    is the method and path, as a Response gives them, for the write's audit line.
     """
 
-    def __init__(self, code, message, *, sent):
+    def __init__(self, code, message, *, sent, where=None):
         super().__init__(code, message)
         self.sent = sent
+        self.where = where
 
 
 @dataclass(frozen=True)
@@ -123,8 +125,11 @@ def _excerpt(body):
     return redact(body.decode("utf-8", "replace"))[:EXCERPT]
 
 
-def _server_says(response):
-    """The server's own explanation: its `message`, or an excerpt of a body without one."""
+def server_says(response):
+    """The server's own explanation, redacted: its `message`, or an excerpt of a body without one.
+
+    The write flow quotes it too, when it reports what the API said to a write.
+    """
     try:
         doc = json.loads(response.body)
     except ValueError:
@@ -150,7 +155,7 @@ def _read_capped(reply, where):
         if total > MAX_BODY:
             raise NoResponse("API_BAD_RESPONSE",
                              f"{where}: the response is over {MAX_BODY} bytes; refused unread",
-                             sent=True)
+                             sent=True, where=where)
 
 
 def _response(method, where, status, headers, body):
@@ -218,7 +223,7 @@ def _status_error(response, needs_scope):
         code, summary = "API_SERVER", "server error; not retried"
     else:
         code, summary = "API_BAD_RESPONSE", f"unexpected HTTP {status}"
-    return ApiError(code, f"{where} → {status}: {summary}; server said: {_server_says(response)}"
+    return ApiError(code, f"{where} → {status}: {summary}; server said: {server_says(response)}"
                           f"{_rid(response.request_id)}",
                     http_status=status, request_id=response.request_id)
 
@@ -298,9 +303,9 @@ class Transport:
             # urllib wraps exactly the failures of connecting and of sending the request, so
             # the API never received a whole request and cannot have acted on it.
             raise NoResponse("NETWORK", f"{where}: could not reach the API: {exc.reason}",
-                             sent=False) from None
+                             sent=False, where=where) from None
         except (OSError, http.client.HTTPException) as exc:
             # Raised while waiting for or reading the response: the request had gone out.
             raise NoResponse("NETWORK", f"{where}: no response after the request was sent "
                                         f"({type(exc).__name__}: {exc}); it may have reached "
-                                        "the API", sent=True) from None
+                                        "the API", sent=True, where=where) from None

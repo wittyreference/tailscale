@@ -359,17 +359,26 @@ def _marked(posture, found):
     return marked, me, state, raised, steps
 
 
-def run_list(posture, args):
-    """`tailnet device list`: every device with all fields, self and protection, warnings, the table."""
-    session = api.session(posture)
+def fetch(session):
+    """Every device, normalised, and the response they came in: the listing and every pre-read.
+
+    A device the CLI cannot act on safely fails the whole read, named by the call it came
+    from, so nothing is planned or listed from a partial inventory.
+    """
     reply = api.list_devices(session)
-    now = datetime.now(timezone.utc)
     response = reply.response
     try:
         found = [normalise(raw) for raw in reply.data]
     except ApiError as exc:
         raise ApiError(exc.code, f"{response.where} → {response.status}: {exc.message}",
                        http_status=response.status, request_id=response.request_id) from None
+    return found, response
+
+
+def run_list(posture, args):
+    """`tailnet device list`: every device with all fields, self and protection, warnings, the table."""
+    found, response = fetch(api.session(posture))
+    now = datetime.now(timezone.utc)
     found, me, state, raised, steps = _marked(posture, found)
     raised += [output.warn(code, message, source)
                for device in found for code, message, source in warnings(device, now)]

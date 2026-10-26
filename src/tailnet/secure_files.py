@@ -205,6 +205,31 @@ def write_private_atomic(path, data, *, code="CREDENTIAL_UNSAFE"):
         os.close(dir_fd)
 
 
+def _open_append(path, code):
+    """Open a private log for appending, the only way it is ever opened for writing, and check it.
+
+    The descriptor comes back only when the opened file passes the §8.2 file checks.
+    """
+    try:
+        fd = os.open(path, _APPEND_FLAGS, 0o600)
+    except OSError as exc:
+        raise LocalError(code, f"cannot append to {path}: {exc.strerror}") from None
+    problems = check_private_stat(os.fstat(fd), os.geteuid())
+    if problems:
+        os.close(fd)
+        raise _refuse("append to", path, problems, code)
+    return fd
+
+
+def check_appendable(path, *, code="AUDIT_UNWRITABLE"):
+    """Open a private log as append_locked would and check it, writing nothing (C9).
+
+    A write that cannot be recorded is not sent, so the write flow asks this just before it
+    sends; the line it appends afterwards goes to a file that has just been shown to take it.
+    """
+    os.close(_open_append(Path(path), code))
+
+
 def append_locked(path, line, *, code="AUDIT_UNWRITABLE"):
     """Append one line to a private log with one write under an exclusive lock (§13.1).
 
@@ -219,14 +244,8 @@ def append_locked(path, line, *, code="AUDIT_UNWRITABLE"):
     if not line.endswith(b"\n") or line.count(b"\n") != 1:
         raise ValueError("append_locked takes exactly one line, ending in a newline")
     path = Path(path)
+    fd = _open_append(path, code)
     try:
-        fd = os.open(path, _APPEND_FLAGS, 0o600)
-    except OSError as exc:
-        raise LocalError(code, f"cannot append to {path}: {exc.strerror}") from None
-    try:
-        problems = check_private_stat(os.fstat(fd), os.geteuid())
-        if problems:
-            raise _refuse("append to", path, problems, code)
         try:
             fcntl.flock(fd, fcntl.LOCK_EX)
             written = os.write(fd, line)
@@ -236,5 +255,36 @@ def append_locked(path, line, *, code="AUDIT_UNWRITABLE"):
             fcntl.flock(fd, fcntl.LOCK_UN)
         except OSError as exc:
             raise LocalError(code, f"cannot append to {path}: {exc.strerror}") from None
+    finally:
+        os.close(fd)
+
+
+class Busy(Exception):
+    """Another process holds the lock: the caller refuses rather than waits."""
+
+
+@contextmanager
+def lock_exclusive(path, *, code):
+    """Hold an exclusive flock on `path`, created 0600, for the length of the with-block.
+
+    It never waits: a held lock raises Busy at once, because a second write queued behind
+    the first would plan from a pre-read the first is about to make stale (D14). Closing
+    the descriptor releases the lock, so a crashed holder never leaves it held. The path is
+    never followed if it is a symlink; any other failure to open it is a LocalError with
+    `code`.
+    """
+    path = Path(path)
+    try:
+        fd = os.open(path, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600)
+    except OSError as exc:
+        raise LocalError(code, f"cannot open the lock {path}: {exc.strerror}") from None
+    try:
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            raise Busy(str(path)) from None
+        except OSError as exc:
+            raise LocalError(code, f"cannot lock {path}: {exc.strerror}") from None
+        yield
     finally:
         os.close(fd)

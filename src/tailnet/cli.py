@@ -6,15 +6,16 @@ import os
 import sys
 import traceback
 
-from tailnet import devices, dns, errors, status
+from tailnet import devices, dns, errors, guard, status, writes
 from tailnet.output import Envelope, emit
 from tailnet.posture import API_PATH, Posture
 from tailnet.redact import install_excepthook, redact
 
 PROG = "tailnet"
 REASON_MAX = 200
-# The dry run prints the apply line with this placeholder for MC's reason (§12.6 step 4).
-PLACEHOLDER = "<why>"
+# The dry run prints the apply line with this placeholder for MC's reason (§12.6 step 4); the
+# guard owns it, so the line it prints and the refusal here can never disagree.
+PLACEHOLDER = guard.PLACEHOLDER
 
 # Which §29 item builds each command; until then it is registered so the grammar and the
 # fourteen-command tripwire hold, and running it says plainly that it is not built yet.
@@ -193,6 +194,7 @@ def _not_built(posture, args):
 # Each command's handler takes the posture and the parsed arguments and returns an Envelope.
 HANDLERS = dict.fromkeys(_BUILT_BY, _not_built)
 HANDLERS["device list"] = devices.run_list
+HANDLERS["device disable-key-expiry"] = writes.run
 HANDLERS["dns"] = dns.run
 HANDLERS["status"] = status.run
 

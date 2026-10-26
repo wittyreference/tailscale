@@ -377,6 +377,34 @@ invariant 8 says every `--apply`, a noop's included; a refusal must not depend o
 self happened to answer; Tailscale parses every tag as lowercase [pol (f)] and another tag is not a
 reference; and a token where none is needed most likely comes from a stale plan.
 
+**A26. (build, 2026-10-26)** §6 gave `writes.run(command, args) -> Envelope` and §12.6 the flow
+and its outcome table, but named no JSON `data` for a write, no audit field for a stop that is not
+a guard refusal, no code for an apply lock that cannot be opened, no way to check C9 without
+writing, and said step 10 appends the result line after releasing the lock; it was built (1) as
+`writes.run(posture, args)`, with `data {op, mode, plans[], results[]|null, refusals[], self,
+protected_file, gate_present, write_client}`, and with a dry run whose every target is a noop
+given the outcome `noop`; (2) with a `write` line's `error {code, message}` and `failure:
+"not-attempted"` for a command stopped before sending by anything but the guard (a pre-read, the
+write secret, the mint), and `failure: "rejected"` with `sent: false` for a connect that failed
+before sending; (3) checking C9 by opening the log for append and running its file checks
+without writing (`audit.check_writable`), and refusing an apply lock that cannot be opened as
+`AUDIT_UNWRITABLE`, since the lock sits beside the log; (4) appending each target's line as soon
+as its outcome is known and releasing the lock last; (5) turning a refusal or stop whose line
+cannot be written into `AUDIT_UNWRITABLE` (exit 3, naming the first reason), while after a POST
+the line's failure is a warning and the write keeps its exit; (6) running C3-C8 for an `--apply`
+whose every target is a noop, but opening no write secret and minting nothing, because nothing is
+sent; (7) planning and sending a target named twice once; (8) treating a re-read that returns
+another device as a failed re-read; and (9) with `http.NoResponse` carrying `where`, so `writes`
+records the method and path the transport used and never spells a sending method itself; because
+agents read the plan and its outcome from `data`; a stop's reason must reach the narrative even
+when the guard did not cause it, and a request that never left the box cannot have changed
+anything; a write that cannot be recorded is not sent, and the state directory that cannot hold
+the lock cannot hold the log; a crash in the middle of a batch must still leave the lines of the
+writes already sent; every write command needs its line, but once a write is out its outcome is
+what must be reported; invariant 8 governs every `--apply` while invariant 4 opens the write
+secret only to send; one device needs one write; a mismatched record cannot confirm anything;
+and `test_only_api_and_tokens_issue_post_requests` keeps sending methods in `api.py`.
+
 ---
 
 ## 0. The design on one page

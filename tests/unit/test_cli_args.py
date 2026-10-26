@@ -153,9 +153,11 @@ def test_device_tag_takes_exactly_one_device(capsys):
     # One device and one change is the whole grammar; the command itself is not built yet.
     code, env = run_json(capsys, "device", "tag", "pi5", "--remove", "tag:lab")
     assert (code, env["error"]["code"]) == (1, "INTERNAL")
-    # disable-key-expiry takes several (§12.5).
+    # disable-key-expiry takes several (§12.5); the test home has no read credential, so the
+    # dry run stops at its first pre-read.
     code, env = run_json(capsys, "device", "disable-key-expiry", "pi5", "spec5", "nomad-b")
-    assert (code, env["command"]) == (1, "device disable-key-expiry")
+    assert (code, env["command"], env["error"]["code"]) == (3, "device disable-key-expiry",
+                                                            "CREDENTIAL_MISSING")
 
 
 def test_no_flag_accepts_a_secret_a_base_url_a_tailnet_or_force():

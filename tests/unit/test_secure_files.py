@@ -343,3 +343,49 @@ def test_a_parent_that_is_not_a_directory_is_refused_not_a_crash(tmp_path):
     exc = refused(blocker / "read.json")
     assert exc.code == "CREDENTIAL_UNSAFE"
     assert str(blocker / "read.json") in exc.message
+
+
+def test_a_log_can_be_checked_for_appending_without_writing_to_it(tmp_path, syscalls):
+    # C9: the write flow asks before it sends whether its one line will have somewhere to go.
+    log = tmp_path / "audit.jsonl"
+    secure_files.check_appendable(log)
+    [flags] = syscalls.open_flags("audit.jsonl")
+    assert flags & (os.O_APPEND | os.O_NOFOLLOW) == os.O_APPEND | os.O_NOFOLLOW
+    assert flags & (os.O_TRUNC | os.O_RDWR) == 0
+    assert log.read_bytes() == b"" and stat.S_IMODE(log.stat().st_mode) == 0o600
+    log.chmod(0o644)
+    with pytest.raises(errors.LocalError) as caught:
+        secure_files.check_appendable(log)
+    assert caught.value.code == "AUDIT_UNWRITABLE" and "mode 0644" in caught.value.message
+
+
+def test_the_apply_lock_is_exclusive_and_never_waits(tmp_path):
+    lock = tmp_path / "apply.lock"
+    with secure_files.lock_exclusive(lock, code="AUDIT_UNWRITABLE"):
+        assert stat.S_IMODE(lock.stat().st_mode) == 0o600
+        # A second holder is told at once rather than queued behind the first (LOCK_NB).
+        with pytest.raises(secure_files.Busy), \
+                secure_files.lock_exclusive(lock, code="AUDIT_UNWRITABLE"):
+            pass
+        # Another process sees it held too: flock locks are shared through the file, not the fd.
+        probe = ("import fcntl, os, sys\n"
+                 "fd = os.open(sys.argv[1], os.O_RDWR)\n"
+                 "try:\n"
+                 "    fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)\n"
+                 "except BlockingIOError:\n"
+                 "    sys.exit(7)\n")
+        held = subprocess.run([sys.executable, "-I", "-c", probe, str(lock)], check=False)
+        assert held.returncode == 7
+    # Released on exit, so the next apply may take it.
+    with secure_files.lock_exclusive(lock, code="AUDIT_UNWRITABLE"):
+        pass
+
+
+def test_the_apply_lock_never_follows_a_symlink(tmp_path):
+    target = private_file(tmp_path, name="elsewhere", content=b"keep\n")
+    (tmp_path / "apply.lock").symlink_to(target)
+    with pytest.raises(errors.LocalError) as caught, \
+            secure_files.lock_exclusive(tmp_path / "apply.lock", code="AUDIT_UNWRITABLE"):
+        pass
+    assert caught.value.code == "AUDIT_UNWRITABLE"
+    assert target.read_bytes() == b"keep\n"
