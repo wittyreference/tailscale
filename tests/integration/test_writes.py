@@ -465,6 +465,33 @@ def test_the_write_token_never_touches_disk_and_comes_from_the_write_client(cli,
         ("read", True), ("write", False)]
 
 
+@pytest.mark.parametrize("scope, refused", [
+    ("devices:core:read", True), ("devices:core:read, dns:read", True),
+    ("dns:read,devices", False), ("all", False)])
+def test_a_write_token_that_cannot_write_a_device_sends_nothing(cli, net, armed, scope, refused):
+    # C10: the write token must hold devices:core, or its legacy name devices, or all; a
+    # grant of anything else is refused before any POST, the way the API would refuse it.
+    def mint(request):
+        """The read client as usual; the write client granted `scope`, split as the API's."""
+        if request.form()["client_id"][0] == WRITE_CLIENT:
+            return token_reply(WRITE_TOKEN, scope=scope, request_id="REQ-mint-write")
+        return token_reply(READ_TOKEN, request_id="REQ-mint-read")
+
+    net.loopback.route("POST", TOKEN, mint)
+    result = disable(cli, "pi5", apply=True)
+    env = envelope(result)
+    assert net.mints() == [READ_CLIENT, WRITE_CLIENT]
+    [logged] = writes_logged(armed)
+    if not refused:
+        assert (result.returncode, env["outcome"]) == (0, "applied"), result.stderr
+        assert len(net.writes()) == 1 and logged["outcome"] == "applied"
+        return
+    assert (result.returncode, env["error"]["code"]) == (5, "WRITE_SCOPE_MISSING")
+    assert net.writes() == [] and net.device("pi5")["keyExpiryDisabled"] is False
+    assert (logged["outcome"], logged["sent"], logged["refusal"]["code"]) == (
+        "refused", False, "WRITE_SCOPE_MISSING")
+
+
 def test_a_held_apply_lock_refuses_a_second_apply(cli, net, armed):
     armed.state_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
     fd = os.open(armed.state_dir / "apply.lock", os.O_RDWR | os.O_CREAT, 0o600)
