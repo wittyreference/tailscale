@@ -17,7 +17,9 @@ def run_hook(tmp_path, email):
            "GIT_CONFIG_GLOBAL": "/dev/null", "GIT_CONFIG_SYSTEM": "/dev/null"}
     if email is not None:
         subprocess.run(["git", "-C", str(tmp_path), "config", "user.email", email], check=True, env=env)
-    return subprocess.run([str(HOOK)], cwd=tmp_path, env=env, capture_output=True, text=True)
+    # Unchecked on purpose: a refusal (exit 1) is the outcome most cases assert on.
+    return subprocess.run([str(HOOK)], cwd=tmp_path, env=env, capture_output=True, text=True,
+                          check=False)
 
 
 def test_the_personal_identity_is_allowed(tmp_path):

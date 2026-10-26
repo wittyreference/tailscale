@@ -87,6 +87,11 @@ numbered list in the message text, so I can answer '2' from the phone if the pic
 dismissed. Recommend one and say why in a clause." The skill's one-question-per-turn rule
 (§19.2 item 2) carries this.
 
+**A4. (build, 2026-10-26)** §4 said `pyproject.toml` holds `[tool.pytest.ini_options]` only; it
+was built with a `[tool.ruff]` table as well (`target-version = "py310"`), and still no build
+backend; because lint has to hold code to the 3.10 floor (critic Q26), and a linter tuned to the
+newest Python would pass 3.11-only syntax that the droplet may not run.
+
 ---
 
 ## 0. The design on one page

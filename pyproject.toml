@@ -1,0 +1,18 @@
+# ABOUTME: Development tool settings for tailnet: the pytest tiers and the ruff Python floor.
+# ABOUTME: No build backend: the CLI is stdlib-only and the installer copies it into place.
+
+[tool.pytest.ini_options]
+# The default run is unit + integration + the hook tests. e2e is excluded by path, not
+# hidden by a marker, so `pytest tests/e2e` always runs it (DESIGN.md §21.1).
+testpaths = ["tests/unit", "tests/integration", "tests/test_pre_commit.py"]
+# src layout without an install: the package comes from src/, and the shared test
+# helpers (netguard, loopback) from tests/.
+pythonpath = ["src", "tests"]
+# Pristine means pristine: any warning fails the run, and a mistyped marker or setting
+# is an error rather than a silent no-op.
+filterwarnings = ["error"]
+addopts = ["--strict-markers", "--strict-config"]
+
+[tool.ruff]
+# The droplet's Python is unknown (critic Q26), so lint against the 3.10 floor.
+target-version = "py310"
