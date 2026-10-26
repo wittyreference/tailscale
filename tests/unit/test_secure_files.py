@@ -334,3 +334,12 @@ def test_error_messages_never_contain_file_contents(tmp_path):
         exc = refused(path)
         assert sentinel() not in str(exc), path
         assert sentinel() not in json.dumps(exc.next), path
+
+
+def test_a_parent_that_is_not_a_directory_is_refused_not_a_crash(tmp_path):
+    # A file where the config directory belongs: refused with the caller's code, rather
+    # than escaping as an OSError the CLI would report as a bug.
+    blocker = private_file(tmp_path, name="config")
+    exc = refused(blocker / "read.json")
+    assert exc.code == "CREDENTIAL_UNSAFE"
+    assert str(blocker / "read.json") in exc.message

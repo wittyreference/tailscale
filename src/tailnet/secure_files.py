@@ -108,22 +108,25 @@ def open_private(path, *, max_bytes=None, code="CREDENTIAL_UNSAFE"):
     """
     path = Path(path)
     euid = os.geteuid()
-    dir_fd = os.open(path.parent, _DIR_FLAGS)
     try:
-        problems = _parent_problems(path.parent, os.fstat(dir_fd), euid)
-        link_stat = os.stat(path.name, dir_fd=dir_fd, follow_symlinks=False)
-        if not stat.S_ISREG(link_stat.st_mode):
-            # Not opened at all: a symlink could point anywhere, a FIFO could block.
-            raise _refuse("read", path, check_private_stat(link_stat, euid) + problems, code)
+        dir_fd = os.open(path.parent, _DIR_FLAGS)
         try:
+            problems = _parent_problems(path.parent, os.fstat(dir_fd), euid)
+            link_stat = os.stat(path.name, dir_fd=dir_fd, follow_symlinks=False)
+            if not stat.S_ISREG(link_stat.st_mode):
+                # Not opened at all: a symlink could point anywhere, a FIFO could block.
+                raise _refuse("read", path, check_private_stat(link_stat, euid) + problems,
+                              code)
             fd = os.open(path.name, _READ_FLAGS, dir_fd=dir_fd)
-        except FileNotFoundError:
-            # Gone since the lstat: absence is still the caller's to judge.
-            raise
-        except OSError as exc:
-            raise LocalError(code, f"cannot read {path}: {exc.strerror}") from None
-    finally:
-        os.close(dir_fd)
+        finally:
+            os.close(dir_fd)
+    except FileNotFoundError:
+        # Absence, of the file or of its directory, is the caller's to judge.
+        raise
+    except OSError as exc:
+        # Anything else in the way (a file where the directory belongs, no permission) is
+        # a local refusal, not a crash.
+        raise LocalError(code, f"cannot read {path}: {exc.strerror}") from None
     try:
         st = os.fstat(fd)
         problems = check_private_stat(st, euid) + problems
