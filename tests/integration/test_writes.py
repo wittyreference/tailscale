@@ -9,6 +9,7 @@ import re
 import pytest
 from credfiles import access_token, fixture_secret, token_reply, write_role
 from fixturefiles import body
+from loopback import Cut
 
 from tailnet import gate
 
@@ -58,9 +59,12 @@ class Tailnet:
         """A device's record in the table, by hostname."""
         return self.devices[IDS[name]]
 
-    def outcome(self, name, status, lands, headers=None):
-        """Answer writes to `name` with `status`; `lands` says whether the change happens."""
-        self._outcomes[IDS[name]] = (status, lands, headers or {})
+    def outcome(self, name, status, lands, headers=None, cut=None):
+        """Answer writes to `name` with `status`; `lands` says whether the change happens.
+
+        `cut` ("close" or "reset") breaks the answer's body off after its first bytes.
+        """
+        self._outcomes[IDS[name]] = (status, lands, headers or {}, cut)
 
     def _mint(self, request):
         """Hand each client its own token, so a test can tell which one a request carried."""
@@ -83,11 +87,13 @@ class Tailnet:
     def _write(self, node_id, kind):
         """Apply a write to the table (unless told it does not land), then answer it."""
         def handler(request):
-            status, lands, headers = self._outcomes.get(node_id, (200, True, {}))
+            status, lands, headers, cut = self._outcomes.get(node_id, (200, True, {}, None))
             if lands:
                 field = "keyExpiryDisabled" if kind == "key" else "tags"
                 self.devices[node_id][field] = request.json()[field]
             reply = {} if status < 300 else {"message": f"the test answers HTTP {status}"}
+            if cut is not None:
+                reply = Cut(reply, 5, end=cut)
             return status, {"X-Tailscale-Request-Id": f"REQ-{kind}-{node_id}", **headers}, reply
         return handler
 
@@ -345,6 +351,28 @@ def test_a_504_with_the_change_absent_exits_6(cli, net, armed):
     [logged] = writes_logged(armed)
     assert (logged["outcome"], logged["confirmed"], logged["failure"]) == ("failed", False,
                                                                            "unconfirmed")
+
+
+@pytest.mark.parametrize("lands", [True, False])
+def test_a_500_whose_body_is_reset_is_decided_by_the_reread_with_one_audit_line(cli, net, armed,
+                                                                               lands):
+    # The status line came, then the connection reset mid-body: the write was sent, so the
+    # re-read decides it (§10.2), never a crash that leaves no audit line (invariant 6).
+    net.outcome("pi5", 500, lands=lands, cut="reset")
+    result = disable(cli, "pi5", apply=True)
+    env = envelope(result)
+    assert len(net.writes()) == 1
+    [logged] = writes_logged(armed)
+    assert logged["sent"] is True
+    if lands:
+        assert (result.returncode, env["outcome"]) == (0, "applied"), result.stderr
+        assert (logged["outcome"], logged["confirmed"]) == ("applied", True)
+    else:
+        assert (result.returncode, env["outcome"], env["error"]["code"]) == (
+            6, "unconfirmed", "WRITE_UNCONFIRMED")
+        assert "do not re-apply" in env["error"]["message"]
+        assert "→ 500" in env["error"]["message"]
+        assert (logged["outcome"], logged["failure"]) == ("failed", "unconfirmed")
 
 
 def test_a_2xx_whose_reread_differs_exits_6(cli, net, armed):

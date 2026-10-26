@@ -4,7 +4,8 @@
 import http.client
 import json
 
-from loopback import Loopback
+import pytest
+from loopback import Cut, Loopback
 
 
 def call(server, method, path, body=None, headers=None):
@@ -117,3 +118,34 @@ def test_text_bodies_keep_the_content_type_the_route_gives(loopback):
     assert headers["Content-Type"] == "application/hujson"
     assert headers["ETag"] == '"abc"'
     assert body == hujson.encode()
+
+
+def test_a_cut_body_declares_its_whole_length_and_closes_after_its_start(loopback):
+    loopback.route("GET", "/api/v2/tailnet/-/acl", (200, {"ETag": '"abc"'}, Cut(b"0123456789", 4)))
+    conn = http.client.HTTPConnection("127.0.0.1", loopback.port, timeout=5)
+    try:
+        conn.request("GET", "/api/v2/tailnet/-/acl")
+        response = conn.getresponse()
+        assert (response.status, response.getheader("Content-Length")) == (200, "10")
+        # The whole-body read is the stdlib's one check of the length, and it trips.
+        with pytest.raises(http.client.IncompleteRead) as caught:
+            response.read()
+        assert caught.value.partial == b"0123"
+    finally:
+        conn.close()
+
+
+def test_a_cut_body_can_end_in_a_reset_after_the_status_line(loopback):
+    loopback.route("POST", "/api/v2/device/n1/key",
+                   (502, {}, Cut({"message": "bad gateway"}, 5, end="reset")))
+    conn = http.client.HTTPConnection("127.0.0.1", loopback.port, timeout=5)
+    try:
+        conn.request("POST", "/api/v2/device/n1/key", body=b"{}")
+        response = conn.getresponse()
+        assert response.status == 502
+        with pytest.raises(ConnectionResetError):
+            response.read()
+    finally:
+        conn.close()
+    with pytest.raises(ValueError):
+        Cut(b"", 0, end="stall")

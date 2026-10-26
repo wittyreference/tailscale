@@ -48,8 +48,8 @@ class NoResponse(ApiError):
     is the method and path, as a Response gives them, for the write's audit line.
     """
 
-    def __init__(self, code, message, *, sent, where=None):
-        super().__init__(code, message)
+    def __init__(self, code, message, *, sent, where=None, **details):
+        super().__init__(code, message, **details)
         self.sent = sent
         self.where = where
 
@@ -300,12 +300,12 @@ class Transport:
             with self.opener.open(request, timeout=self._timeout) as reply:
                 return _response(method, where, reply.status, reply.headers,
                                  _read_capped(reply, where))
-        except urllib.error.HTTPError as reply:
+        except urllib.error.HTTPError as exc:
             # urllib raises every non-2xx status, refused redirects included. It is still the
-            # API's answer, and the caller decides what it means.
-            with reply:
-                return _response(method, where, reply.code, reply.headers,
-                                 _read_capped(reply, where))
+            # API's answer, and the caller decides what it means. Its body is read below,
+            # outside this clause: an exception raised inside an except clause skips the
+            # clauses after it, so a reset mid-body would escape raw (exit 1, no audit line).
+            reply = exc
         except urllib.error.URLError as exc:
             # urllib wraps exactly the failures of connecting and of sending the request, so
             # the API never received a whole request and cannot have acted on it.
@@ -316,3 +316,17 @@ class Transport:
             raise NoResponse("NETWORK", f"{where}: no response after the request was sent "
                                         f"({type(exc).__name__}: {exc}); it may have reached "
                                         "the API", sent=True, where=where) from None
+        request_id = reply.headers.get("x-tailscale-request-id")
+        with reply:
+            try:
+                body = _read_capped(reply, where)
+            except (OSError, http.client.HTTPException) as exc:
+                # The status line arrived, so the request had gone out; the body broke off.
+                # Mapped as any failure after sending is, with what did arrive kept.
+                raise NoResponse("NETWORK", f"{where} → {reply.code}: the response broke off "
+                                            f"before its body was read ({type(exc).__name__}: "
+                                            f"{exc}); it may have reached the API"
+                                            f"{_rid(request_id)}",
+                                 sent=True, where=where, http_status=reply.code,
+                                 request_id=request_id) from None
+        return _response(method, where, reply.code, reply.headers, body)

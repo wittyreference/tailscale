@@ -807,6 +807,15 @@ otherwise not expect; A1 answered MC1-MC4, so asking again would contradict the 
 thing used to point at; and a guide MC follows from a phone is only as good as its commands, which
 the parser and the Makefile can check where prose review cannot.
 
+**A44. (review, 2026-10-26) finding 0:** a non-2xx response whose body broke off mid-read (a
+reset or timeout after the status line) escaped `http.Transport` as a raw `OSError`, because the
+body was read inside the `except HTTPError` clause, where the clauses after it never see what it
+raises; a write that landed then ended as exit 1 with no `write` audit line, and a read as exit 1
+instead of 4. The error body is now read after that clause, under the same mapping as a 2xx body:
+`http.NoResponse` `NETWORK`, `sent: true`, carrying the status and request ID that did arrive;
+because §10.2 already treats a reset after sending as a 5xx whose re-read decides it, and
+invariant 6 needs the line.
+
 ---
 
 ## 0. The design on one page

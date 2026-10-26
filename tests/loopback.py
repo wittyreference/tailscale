@@ -2,7 +2,9 @@
 # ABOUTME: records every request, standing in for api.tailscale.com in unit and integration tests.
 
 import json
+import socket
 import socketserver
+import struct
 import threading
 from dataclasses import dataclass
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -30,6 +32,28 @@ class Recorded:
     def form(self):
         """Parse a form-encoded body, as the OAuth token endpoint receives it."""
         return parse_qs(self.body.decode("utf-8"), keep_blank_values=True)
+
+
+@dataclass(frozen=True)
+class Cut:
+    """A reply body the seam declares whole but sends only the first `sent` bytes of.
+
+    http.server always sends a whole body, while a real connection can break mid-body: a
+    proxy or a restarting server closes it (`end="close"`, a clean FIN) or resets it
+    (`end="reset"`, an RST). The Content-Length still names the whole body, so the client
+    sees a response that stopped short of what it promised. `body` takes any form a route
+    reply does.
+    """
+
+    body: object
+    sent: int
+    end: str = "close"
+
+    def __post_init__(self):
+        # Checked here, in the test's own thread: a mistake found on the server thread
+        # would only end that connection, silently.
+        if self.end not in ("close", "reset"):
+            raise ValueError(f"a cut ends with close or reset, not {self.end!r}")
 
 
 def _encode(headers, body):
@@ -94,17 +118,32 @@ class _Handler(BaseHTTPRequestHandler):
             body=self.rfile.read(length),
         )
         status, headers, body = seam._reply_for(request)
-        headers, body = _encode(headers, body)
+        cut = body if isinstance(body, Cut) else None
+        headers, body = _encode(headers, body if cut is None else cut.body)
         try:
             self.send_response(status)
             for name, value in headers.items():
                 self.send_header(name, value)
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()
-            self.wfile.write(body)
+            self.wfile.write(body if cut is None else body[:cut.sent])
         except (BrokenPipeError, ConnectionResetError):
             # The client gave up first, which is what a timeout test sets out to cause.
-            pass
+            return
+        if cut is not None:
+            self._break(cut.end)
+
+    def _break(self, end):
+        """End the connection short of the declared body, the way `Cut.end` names.
+
+        The seam answers HTTP/1.0, which closes after every response, so returning is the
+        clean close. A zero linger turns the close into an RST, and Linux still hands the
+        client what was queued before it, so the client reads the status line first.
+        """
+        if end == "reset":
+            self.connection.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER,
+                                       struct.pack("ii", 1, 0))
+            self.connection.close()
 
     do_GET = do_POST = do_PUT = do_PATCH = do_DELETE = _serve
 
@@ -116,9 +155,10 @@ class Loopback:
     """A running stand-in for the Tailscale API on 127.0.0.1, with a route table and a recorder.
 
     Routes map (method, path) to replies. A reply is a (status, headers, body) tuple, where a
-    dict or list body is sent as JSON, or a callable that takes the Recorded request and
-    returns such a tuple. Requests with no route, past the end of a reply sequence, or whose
-    handler raised are answered 404 or 500 and listed in `unexpected`.
+    dict or list body is sent as JSON and a Cut body breaks off partway, or a callable that
+    takes the Recorded request and returns such a tuple. Requests with no route, past the
+    end of a reply sequence, or whose handler raised are answered 404 or 500 and listed in
+    `unexpected`.
     """
 
     def __init__(self):

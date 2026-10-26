@@ -10,6 +10,7 @@ import urllib.request
 
 import pytest
 from credfiles import access_token, token_reply, write_cache, write_role
+from loopback import Cut
 
 import tailnet
 from tailnet import errors, http, tokens
@@ -170,6 +171,25 @@ def test_a_write_makes_exactly_one_request_whatever_the_status(loopback, tmp_pat
         release.set()
     assert [r.method for r in loopback.requests] == ["POST"]
     assert sleeps == []
+
+
+@pytest.mark.parametrize("call", [get, post_write], ids=["read", "write"])
+def test_an_error_body_cut_by_a_reset_is_no_response_that_may_have_landed(loopback, transport,
+                                                                          call):
+    # A proxy that gives up mid-answer, say: the status line came, so the request had gone
+    # out, and the body never did. A read is NETWORK (exit 4); a write takes its outcome from
+    # the re-read, as after any reset once sent (§10.2), never a raw exception (exit 1).
+    reply = (502, {"X-Tailscale-Request-Id": "REQ-c1"},
+             Cut({"message": "bad gateway"}, 5, end="reset"))
+    loopback.route("GET", API + "/tailnet/-/devices", reply)
+    loopback.route("POST", API + "/device/n1/key", reply)
+    exc = failure(call, transport)
+    assert (exc.exit, exc.code, exc.sent) == (4, "NETWORK", True)
+    assert exc.where.endswith(("/tailnet/-/devices", "/device/n1/key"))
+    # The status and request ID it did send are kept: support asks for the ID.
+    assert (exc.http_status, exc.request_id) == (502, "REQ-c1")
+    assert "→ 502" in exc.message and "REQ-c1" in exc.message
+    assert len(loopback.requests) == 1
 
 
 def test_a_connect_failure_before_send_is_reported_as_not_sent(tmp_path):
