@@ -540,6 +540,41 @@ def test_every_attempt_leaves_one_audit_line_with_the_decided_outcome(cli, net, 
     assert [r["mode"] for r in logged] == ["dry-run"] + ["apply"] * 5
 
 
+@pytest.mark.parametrize("apply", [True, False])
+def test_a_failed_pre_read_still_leaves_its_write_line(cli, net, armed, apply):
+    # A stop the guard did not cause still reaches the narrative: one line, no target since
+    # nothing was resolved, failed / not-attempted with the stop's code (A26 (2), invariant 6).
+    net.loopback.route("GET", DEVICES, lambda request: (
+        500, {"X-Tailscale-Request-Id": "REQ-list"}, {"message": "the test answers HTTP 500"}))
+    result = disable(cli, "pi5", apply=apply)
+    env = envelope(result)
+    assert (result.returncode, env["error"]["code"]) == (4, "API_SERVER"), result.stderr
+    assert net.writes() == []
+    [logged] = writes_logged(armed)
+    assert (logged["mode"], logged["outcome"], logged["failure"], logged["sent"],
+            logged["target"]) == ("apply" if apply else "dry-run", "failed", "not-attempted",
+                                  False, None)
+    assert logged["error"]["code"] == env["error"]["code"]
+
+
+def test_a_refused_write_mint_still_leaves_its_write_line(cli, net, armed):
+    def mint(request):
+        """The read client gets its token; the write client is refused, as a revoked one is."""
+        if request.form()["client_id"][0] == WRITE_CLIENT:
+            return 401, {"X-Tailscale-Request-Id": "REQ-mint-write"}, {"message": "revoked"}
+        return token_reply(READ_TOKEN, request_id="REQ-mint-read")
+
+    net.loopback.route("POST", TOKEN, mint)
+    result = disable(cli, "pi5", apply=True)
+    env = envelope(result)
+    assert (result.returncode, env["error"]["code"]) == (3, "TOKEN_REJECTED"), result.stderr
+    assert net.writes() == [] and net.mints() == [READ_CLIENT, WRITE_CLIENT]
+    [logged] = writes_logged(armed)
+    assert (logged["target"]["nodeId"], logged["outcome"], logged["failure"], logged["sent"]) == (
+        "nPi5x001CNTRL", "failed", "not-attempted", False)
+    assert logged["error"]["code"] == "TOKEN_REJECTED"
+
+
 def test_the_reason_is_recorded_in_the_audit_line(cli, net, armed):
     result = disable(cli, "pi5", apply=True)
     assert result.returncode == 0, result.stderr
