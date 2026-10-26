@@ -610,6 +610,19 @@ lands somewhere (§8.4 step 6), and a stored, verified client stays stored whate
 narrative says, as A13 has for forget; and forking the pytest process, which runs the loopback
 server's threads, warns on Python 3.12+ and can deadlock the child.
 
+**A35. (build, 2026-10-26)** §8.6 said `credentials forget` prints "this is not revocation" and
+logs, and A13 made a log that cannot be written a report rather than a failure, but neither
+gave the command's output; it was built as `credentials.run_forget` with `data {role, removed[],
+client_id, audit_error, not_revocation}`, the not-revocation line printed for every role
+(`token` adds that a removed token stays valid until it expires, at most an hour), an
+unwritable log raised as the warning `AUDIT_UNWRITABLE` saying the files are gone, and a `next`
+step for MC that revokes in the console only if the client is no longer wanted or its secret may
+have been exposed; with every command now built, the "not built yet" stand-in and its test are
+retired; because the session-scoped posture (§2) forgets the write client after every write
+session and re-arms it with the same client, so an unconditional "revoke" would steer MC into
+destroying a client they mean to keep, while a token removed from disk is still a live token
+until its hour runs out.
+
 ---
 
 ## 0. The design on one page

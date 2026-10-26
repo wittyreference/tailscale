@@ -215,12 +215,6 @@ def test_the_command_set_is_exactly_the_designed_fourteen():
     assert set(cli.HANDLERS) == DESIGNED
 
 
-def test_a_command_not_built_yet_names_the_item_that_builds_it(capsys):
-    code, env = run_json(capsys, "credentials", "forget", "token")
-    assert (code, env["error"]["code"], env["outcome"]) == (1, "INTERNAL", "error")
-    assert "not built yet" in env["error"]["message"] and "§29 item 26" in env["error"]["message"]
-
-
 def test_test_posture_announces_itself_on_every_run(capsys, test_posture):
     code, out, err = run(capsys, "--json", "device", "rename")
     assert code == 2

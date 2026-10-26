@@ -198,3 +198,50 @@ def test_typed_tags_that_are_not_tags_store_nothing(cli, loopback, home, typed):
     assert code == 2, shown
     assert "TAG_MALFORMED" in shown
     assert not (home.config_dir / "write.json").exists()
+
+
+NOT_REVOCATION = ("this is not revocation. The client still exists in Tailscale; MC revokes it in "
+                  "the console: Trust credentials → Revoke → Revoke")
+
+
+def test_forget_write_disarms_without_a_prompt(cli, loopback, home):
+    write_role(home, "read")
+    write_role(home, "write")
+    # No terminal and no input: any agent may disarm, and nothing waits for an answer.
+    result = cli("credentials", "forget", "write")
+    assert result.returncode == 0, result.stderr
+    assert sorted(p.name for p in home.config_dir.iterdir()) == ["read.json", "read.secret"]
+    assert NOT_REVOCATION in result.stdout
+    assert result.stdout.startswith("OK: forgot the write client kWrite0001CNTRL")
+    [line] = audit_records(home, "credential.forget")
+    assert (line["role"], line["client_id"], line["removed"]) == (
+        "write", "kWrite0001CNTRL", ["write.secret", "write.json"])
+    # Disarming again is not an error: there is nothing left to remove, and it says so.
+    again = json.loads(cli("--json", "credentials", "forget", "write").stdout)
+    assert (again["exit"], again["outcome"]) == (0, "ok")
+    assert again["data"]["removed"] == [] and again["data"]["not_revocation"] == NOT_REVOCATION
+    assert any(step["who"] == "mc" and step.get("needs") == "console" for step in again["next"])
+    assert loopback.requests == []
+
+
+def test_forget_token_removes_only_the_cache(cli, home):
+    write_role(home, "read")
+    (home.config_dir / "read-token.json").write_text("{}")
+    (home.config_dir / "read-token.json").chmod(0o600)
+    env = json.loads(cli("--json", "credentials", "forget", "token").stdout)
+    assert env["data"]["removed"] == ["read-token.json"]
+    assert sorted(p.name for p in home.config_dir.iterdir()) == ["read.json", "read.secret"]
+
+
+def test_forget_reports_a_log_it_cannot_write_and_disarms_anyway(cli, home):
+    write_role(home, "write")
+    home.state_dir.parent.mkdir(parents=True, exist_ok=True)
+    home.state_dir.write_bytes(b"")
+    result = cli("--json", "credentials", "forget", "write")
+    assert result.returncode == 0, result.stderr
+    env = json.loads(result.stdout)
+    assert env["data"]["removed"] == ["write.secret", "write.json"]
+    assert [w["code"] for w in env["warnings"]] == ["AUDIT_UNWRITABLE"]
+    assert "the files are gone" in env["warnings"][0]["message"]
+    assert "tailnet: AUDIT_UNWRITABLE:" in result.stderr
+    assert not (home.config_dir / "write.secret").exists()

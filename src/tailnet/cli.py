@@ -7,6 +7,7 @@ import sys
 import traceback
 
 from tailnet import (
+    credentials,
     devices,
     diagnose,
     dns,
@@ -27,15 +28,6 @@ REASON_MAX = 200
 # The dry run prints the apply line with this placeholder for MC's reason (§12.6 step 4); the
 # guard owns it, so the line it prints and the refusal here can never disagree.
 PLACEHOLDER = guard.PLACEHOLDER
-
-# Which §29 item builds each command; until then it is registered so the grammar and the
-# fourteen-command tripwire hold, and running it says plainly that it is not built yet.
-_BUILT_BY = {
-    "status": 27, "doctor": 25, "device list": 15, "device tag": 19,
-    "device disable-key-expiry": 18, "policy get": 21, "policy draft": 21, "policy validate": 21,
-    "policy diff": 21, "policy test": 21, "dns": 22, "diagnose": 24, "credentials set": 26,
-    "credentials forget": 26,
-}
 
 
 class _Parser(argparse.ArgumentParser):
@@ -195,28 +187,23 @@ def _check(args):
         raise errors.UsageError("USAGE", "device tag needs at least one --add TAG or --remove TAG")
 
 
-def _not_built(posture, args):
-    """Stand in for a command whose §29 item has not landed: a clear internal error, exit 1."""
-    raise errors.TailnetError(errors.INTERNAL, "INTERNAL",
-                              f"`tailnet {args.command}` is not built yet; it lands with "
-                              f"DESIGN.md §29 item {_BUILT_BY[args.command]}")
-
-
 # Each command's handler takes the posture and the parsed arguments and returns an Envelope.
-HANDLERS = dict.fromkeys(_BUILT_BY, _not_built)
-HANDLERS["device list"] = devices.run_list
-HANDLERS["device tag"] = writes.run
-HANDLERS["device disable-key-expiry"] = writes.run
-HANDLERS["policy get"] = policy.run_get
-HANDLERS["policy draft"] = policy.run_draft
-HANDLERS["policy validate"] = policy.run_validate
-HANDLERS["policy diff"] = policy.run_diff
-HANDLERS["policy test"] = policy.run_test
-HANDLERS["dns"] = dns.run
-HANDLERS["diagnose"] = diagnose.run
-HANDLERS["status"] = status.run
-HANDLERS["doctor"] = doctor.run
-HANDLERS["credentials set"] = enrol.run_set
+HANDLERS = {
+    "status": status.run,
+    "doctor": doctor.run,
+    "device list": devices.run_list,
+    "device tag": writes.run,
+    "device disable-key-expiry": writes.run,
+    "policy get": policy.run_get,
+    "policy draft": policy.run_draft,
+    "policy validate": policy.run_validate,
+    "policy diff": policy.run_diff,
+    "policy test": policy.run_test,
+    "dns": dns.run,
+    "diagnose": diagnose.run,
+    "credentials set": enrol.run_set,
+    "credentials forget": credentials.run_forget,
+}
 
 
 def _wants_json(argv):
@@ -231,7 +218,7 @@ def _command_of(argv):
     words = [word for word in argv if not word.startswith("-")]
     for size in (2, 1):
         name = " ".join(words[:size])
-        if name in _BUILT_BY:
+        if name in HANDLERS:
             return name
     return PROG
 

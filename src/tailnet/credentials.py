@@ -1,5 +1,5 @@
-# ABOUTME: Loads the read and write OAuth clients from MC's 0600 files, tells which of the four modes is
-# ABOUTME: configured, and forgets a role on request. No secret ever comes from argv or the environment.
+# ABOUTME: The read and write OAuth clients in MC's 0600 files: loaded and checked, stored for `credentials
+# ABOUTME: set`, the mode they make, and `credentials forget`. No secret comes from argv or the environment.
 
 import json
 import os
@@ -8,8 +8,9 @@ import stat
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from tailnet import audit, secure_files
+from tailnet import audit, output, secure_files
 from tailnet.errors import LocalError, Refused, TailnetError
+from tailnet.output import Envelope
 from tailnet.redact import REDACTOR
 
 # §8.2 item 7: a credential file and a secret file are a few hundred bytes at most.
@@ -39,6 +40,17 @@ _FORGET = {
     "read": ("read.secret", "read.json", TOKEN_CACHE),
     "token": (TOKEN_CACHE,),
 }
+
+# §8.6: what `forget` must say every time. Removing a file disarms this host only; the client
+# and its live tokens die only when MC revokes it in the console [TC L380-388; cred §6].
+NOT_REVOCATION = ("this is not revocation. The client still exists in Tailscale; MC revokes it in "
+                  "the console: Trust credentials → Revoke → Revoke")
+_REVOKE = {"who": "mc", "needs": "console",
+           "do": "Only if the client is no longer wanted or its secret may have been exposed: in "
+                 "the admin console open Settings → Trust credentials, select it, then Revoke → "
+                 "Revoke",
+           "why": "removing files disarms this host only; revoking kills the client and every "
+                  "token it has issued, and a new client then needs `credentials set`"}
 
 # Where MC creates the client before `credentials set` can store it [cred §12; OC L34-42].
 _CONSOLE_STEPS = (
@@ -443,3 +455,35 @@ def forget(posture, role):
     except LocalError as exc:
         audit_error = f"{exc.code}: {exc.message}"
     return Forgotten(role, tuple(removed), facts["client_id"], audit_error)
+
+
+def run_forget(posture, args):
+    """`tailnet credentials forget {read|write|token}`: remove the files, say it is not revocation.
+
+    Exit 0 whatever was there: removing power never prompts and never waits on the log, and
+    a log line that could not be written is a warning, since the disarm itself happened
+    (A13). Only a file that cannot be removed fails (CREDENTIAL_UNSAFE, exit 3).
+    """
+    done = forget(posture, args.role)
+    raised = []
+    if done.audit_error is not None:
+        code, _, message = done.audit_error.partition(": ")
+        raised.append(output.warn(code, f"{message}; the files are gone, but this forget is not "
+                                        "in the local audit log"))
+    who = {"write": "the write client", "read": "the read client",
+           "token": "the cached read token"}[args.role]
+    named = f" {done.client_id}" if done.client_id and args.role != "token" else ""
+    if done.removed:
+        headline = f"OK: forgot {who}{named}: removed {', '.join(done.removed)}"
+    else:
+        headline = f"OK: nothing to forget: {who} has no files on this host"
+    lines = [NOT_REVOCATION]
+    if args.role == "token":
+        lines.append("a removed token stays valid until it expires, at most an hour; revoking "
+                     "the read client ends it now")
+    return Envelope("credentials forget", posture.kind,
+                    data={"role": args.role, "removed": list(done.removed),
+                          "client_id": done.client_id, "audit_error": done.audit_error,
+                          "not_revocation": NOT_REVOCATION},
+                    warnings=raised, next=[dict(_REVOKE)], measured_at=output.now_utc(),
+                    headline=headline, lines=lines)
