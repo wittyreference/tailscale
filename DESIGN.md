@@ -959,6 +959,14 @@ the narrowed four, else read.json's) and saying only its read tokens are narrowe
 scope" in A1 and §8 names the client's grant, and single-client mode means that grant can write,
 which is not the four MC chose (MC2, MC3).
 
+**A57. (review, 2026-10-26) finding 20:** §16.3 re-measures an answer "older than 30 days" and A33
+never counts one whose time cannot be read, but an answer dated in the future was trusted until
+that date plus 30 days and reported with a negative age; a line written while this host's clock ran
+ahead, or planted in the log, held off every re-measure that long. An answer dated more than
+`CLOCK_SKEW` (60 s, L10's tolerance) after this host's clock is now never settled, so its step
+measures again, and a reused answer's age is never below zero; because a future time leaves the
+answer's age as unknown as an unreadable one, and verification-discipline's 30-day bound must hold.
+
 ---
 
 ## 0. The design on one page

@@ -69,6 +69,19 @@ def test_answers_older_than_30_days_are_re_measured():
     assert doctor.settled_answers([run_line({"Q4": unreadable})]) == {}
 
 
+def test_an_answer_dated_after_this_host_s_clock_is_measured_again():
+    # A time ahead of the clock leaves the answer's age as unknown as an unreadable one, so it
+    # never counts as settled; otherwise it would stand until that date plus 30 days (A57).
+    ahead = answer("refused with HTTP 403", 0)
+    ahead["measured_at"] = format_utc(NOW + timedelta(days=1))
+    assert doctor.due(ahead, NOW, settle=False) == (
+        f"settled at {ahead['measured_at']}, after this host's clock; measuring again")
+    # Within the skew L10 tolerates, it stands, and its age is never negative.
+    skewed = {**ahead, "measured_at": format_utc(NOW + timedelta(seconds=30))}
+    assert doctor.due(skewed, NOW, settle=False) is None
+    assert doctor.age_days(skewed, NOW) == 0
+
+
 def test_an_answer_about_another_read_client_is_measured_again():
     # S2 and S3 describe one client (its narrowed mint, its key record), so after MC rotates
     # the read client the stored answer is about a client no longer in use (A55).

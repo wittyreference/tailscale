@@ -289,6 +289,20 @@ def test_an_answer_older_than_30_days_is_measured_again(cli, tailnet, ready):
     assert "over 30" in found["S5"]["evidence"]["measured_because"]
 
 
+def test_an_answer_dated_in_the_future_is_measured_again(cli, tailnet, ready):
+    # A line written while the clock ran ahead, or planted, must not hold off a re-measure
+    # until its date plus 30 days (A57).
+    ahead = format_utc(datetime.now(timezone.utc) + timedelta(days=400))
+    audit.append(ready, {"event": "doctor.run", "settled": {
+        "Q4": {"answer": "a call outside the read scopes is refused with HTTP 404",
+               "evidence": {}, "status": "INFO", "measured_at": ahead}}})
+    env = envelope(cli("--json", "doctor"))
+    assert ("GET", ROUTES) in set(tailnet.calls())
+    s5 = checks_of(env)["S5"]
+    assert "HTTP 403" in s5["finding"] and "days ago" not in s5["finding"]
+    assert "after this host's clock" in s5["evidence"]["measured_because"]
+
+
 def test_an_answer_recorded_under_another_posture_is_never_reused(cli, tailnet, ready):
     # A production line in a test home's log (or a test line that reached the real log)
     # answered against another API: it must never stop this run measuring for 30 days.

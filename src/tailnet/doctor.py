@@ -120,8 +120,9 @@ def settled_answers(records):
 
 
 def age_days(entry, now):
-    """Whole days since a stored answer was measured."""
-    return (now - parse_time(entry["measured_at"])) // timedelta(days=1)
+    """Whole days since a stored answer was measured; never negative, since an answer dated
+    within CLOCK_SKEW ahead of this host's clock still stands (A57)."""
+    return max(0, (now - parse_time(entry["measured_at"])) // timedelta(days=1))
 
 
 def due(entry, now, *, settle, client_id=None):
@@ -142,6 +143,11 @@ def due(entry, now, *, settle, client_id=None):
             return "settled before its read client was recorded; measuring again"
         return f"settled for read client {was}, not {client_id}; measuring again"
     measured = parse_time(entry["measured_at"])
+    # A time ahead of this host's clock by more than L10 tolerates leaves the age unknown,
+    # as an unreadable time does (A33), and would otherwise stand until that date plus 30
+    # days; CLOCK_SKEW is read at call time from below (A57).
+    if measured - now > CLOCK_SKEW:
+        return f"settled at {entry['measured_at']}, after this host's clock; measuring again"
     if now - measured > SETTLE_AFTER:
         return f"last settled {age_days(entry, now)} days ago, over {SETTLE_AFTER.days}"
     return None
