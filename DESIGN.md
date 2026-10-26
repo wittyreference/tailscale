@@ -580,6 +580,36 @@ mint would cost MC a console event and settle nothing new; a proposal without a 
 be refused as `PROTECTED_MALFORMED` when MC ran it; and §5.4's `next` is where agents look for
 who acts.
 
+**A34. (build, 2026-10-26)** §6 gave `credentials.set_interactive(role, io)` while placing
+`credentials` before `tokens` and `api` in its order; §8.4 wrote the files (step 5) before the
+verification mint (step 6) and deleted them when a write client's grant could not write, named
+no code for that case or for typed tags that are not tags, did not say where prompts go, and
+recorded the self-lookup's outcome nowhere in particular; it was built (1) as a new module
+`enrol.py` in the command tier (after `writes`, whose write-scope rule it shares) holding
+`set_interactive(posture, role, io)`, the `Terminal` it prompts through and the `credentials
+set` handler, with `credentials.typed` (the typed client held to the loading rules, its secret
+registered first) and `credentials.store` (secret, then metadata naming it with `file:`, each
+0600 and atomic) as its local halves, `tokens.store_cache` and `discard_cache` shared with
+`ReadToken`, and `api.get_key(…, as_token=…)` so the self-lookup asks with the new client's own
+token; (2) verifying before storing: the mint, and for `write` the scope check, the self-lookup
+and any typed tags, all come before a file is written, so a client that is refused, rejected or
+unreachable leaves the old files as they were and writes nothing; (3) refusing a write client
+whose grant holds none of `devices:core`, `devices` or `all` as `CREDENTIAL_MALFORMED` (exit 3),
+and typed tags that are empty or not tags as `TAG_MALFORMED` (exit 2); (4) prompting on stderr,
+getpass reading the secret from the controlling terminal with echo off, and a declined `replace?
+[y/N]` exiting 0 with nothing changed; (5) adding `self_lookup {status, request_id, error}` to the
+write client's `credential.set` line, and reporting a line that cannot be written as a warning;
+and (6) driving the integration tests through `tests/pty_cli.py`, a single-threaded helper that
+does the `pty.fork` and answers each prompt; because a module cannot mint before the module that
+mints in its own import order, and a lazy import would only hide the cycle §6 forbids; a typed
+secret that fails verification would otherwise have replaced a working one on disk, and a file
+deleted again was still written; a client that cannot write is the wrong credential for the
+role, while exit 5 means the guard declined a write; a typed tag is an argument MC can retype;
+with `--json` stdout holds one envelope; Q3 is settled for the write client only if its outcome
+lands somewhere (§8.4 step 6), and a stored, verified client stays stored whatever the
+narrative says, as A13 has for forget; and forking the pytest process, which runs the loopback
+server's threads, warns on Python 3.12+ and can deadlock the child.
+
 ---
 
 ## 0. The design on one page

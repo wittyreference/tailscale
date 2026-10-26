@@ -74,9 +74,11 @@ def _key(key_id):
     return quote(key_id, safe="")
 
 
-def _get(session, name, path, *, query=None, accept=None):
-    """GET with the read token; a read, so the transport may retry it once on a 429."""
-    return session.transport.request("GET", path, token=session.read_token, accept=accept,
+def _get(session, name, path, *, query=None, accept=None, token=None):
+    """GET with the read token, or a token minted in this command; a read, so the transport may
+    retry it once on a 429."""
+    bearer = session.read_token if token is None else token
+    return session.transport.request("GET", path, token=bearer, accept=accept,
                                      query=query, idempotent=True, needs_scope=SCOPES[name])
 
 
@@ -119,9 +121,19 @@ def get_device(session, node_id):
     return Reply(_object(response), response)
 
 
-def get_key(session, key_id):
-    """A key's record by ID: the self-lookup that reports a client's scopes and tags [api §9.2]."""
-    response = _get(session, "get_key", f"/tailnet/-/keys/{_key(key_id)}")
+def get_key(session, key_id, *, as_token=None):
+    """A key's record by ID: the self-lookup that reports a client's scopes and tags [api §9.2].
+
+    Any scope may read the key in use [TC L45], so `credentials set write` asks with the
+    token it just minted from that client (`as_token`, a tokens.Token); every other caller
+    asks with the session's read token.
+    """
+    bearer = None
+    if as_token is not None:
+        if not isinstance(as_token, tokens.Token):
+            raise ValueError("a self-lookup goes with a token minted in this command")
+        bearer = as_token.access_token
+    response = _get(session, "get_key", f"/tailnet/-/keys/{_key(key_id)}", token=bearer)
     return Reply(_object(response), response)
 
 

@@ -11,6 +11,7 @@ from tailnet import (
     diagnose,
     dns,
     doctor,
+    enrol,
     errors,
     guard,
     policy,
@@ -215,6 +216,7 @@ HANDLERS["dns"] = dns.run
 HANDLERS["diagnose"] = diagnose.run
 HANDLERS["status"] = status.run
 HANDLERS["doctor"] = doctor.run
+HANDLERS["credentials set"] = enrol.run_set
 
 
 def _wants_json(argv):

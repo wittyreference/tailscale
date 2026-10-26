@@ -3,6 +3,7 @@
 
 import json
 import stat
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -252,6 +253,23 @@ def test_write_tokens_are_never_cached(loopback, posture, transport, syscalls):
         "write", "kWrite0001CNTRL", access_token("write013"))
     assert not cache_path(posture).exists()
     assert syscalls.named("read-token.json") == []
+
+
+def test_only_a_read_only_read_token_is_ever_stored(loopback, posture, transport):
+    # `credentials set read` caches its verification token by the same rule the reads use.
+    loopback.route("POST", TOKEN, token_reply(access_token("store001")))
+    token = tokens.mint(posture, transport, credentials.load_read(posture))
+    tokens.store_cache(posture, token)
+    cache = json.loads(cache_path(posture).read_text())
+    assert (cache["client_id"], cache["access_token"], cache["scope"]) == (
+        "kRead0001CNTRL", access_token("store001"), READ_SCOPES)
+    assert stat.S_IMODE(cache_path(posture).stat().st_mode) == 0o600
+    for unsafe in (replace(token, scope="devices:core"), replace(token, role="write")):
+        with pytest.raises(ValueError):
+            tokens.store_cache(posture, unsafe)
+    tokens.discard_cache(posture)
+    assert not cache_path(posture).exists()
+    tokens.discard_cache(posture)
 
 
 def test_a_write_mint_that_cannot_be_logged_stops_the_write(loopback, posture, transport):

@@ -231,3 +231,16 @@ def test_the_openapi_document_is_read_without_a_token(loopback, posture, transpo
     assert (request.method, request.path, request.query) == ("GET", API, "outputOpenapiSchema=true")
     assert request.header("authorization") is None
     assert request.header("accept") == "*/*"
+
+
+def test_the_self_lookup_can_ask_as_the_client_it_names(loopback, session, write_token):
+    # `credentials set write` looks its new client up with that client's own token: any scope
+    # may read the key in use [TC L45], and the read client is not the one being asked about.
+    loopback.route("GET", API + "/tailnet/-/keys/kWrite0001CNTRL",
+                   (200, {}, {"id": "kWrite0001CNTRL", "tags": ["tag:fleet"]}))
+    reply = api.get_key(session, "kWrite0001CNTRL", as_token=write_token)
+    assert reply.data["tags"] == ["tag:fleet"]
+    [lookup] = sent(loopback)
+    assert lookup.header("authorization") == WRITE_BEARER
+    with pytest.raises(ValueError):
+        api.get_key(session, "kWrite0001CNTRL", as_token=access_token("write001"))

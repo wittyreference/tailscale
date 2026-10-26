@@ -352,7 +352,48 @@ def test_forget_never_waits_on_the_audit_log(posture):
     assert not (posture.config_dir / "write.secret").exists()
 
 
-def test_set_interactive_is_not_built_yet(posture):
-    # credentials set over a TTY is §29 item 26; until then it must fail loudly, not half-work.
-    with pytest.raises(NotImplementedError):
-        credentials.set_interactive(posture, "read", None)
+def test_a_typed_client_is_checked_as_a_loaded_one_is_and_its_secret_registered_first(posture):
+    secret = fixture_secret("typed0042")
+    cred = credentials.typed(posture, "read", "kTyped01CNTRL", secret)
+    assert (cred.role, cred.client_id, cred.secret) == ("read", "kTyped01CNTRL", secret)
+    assert secret not in repr(cred)
+    assert redact(f"echo {secret}") == "echo [REDACTED]"
+    # A real key typed into a test home is refused, and never shown, like one in a file.
+    with pytest.raises(errors.LocalError) as caught:
+        credentials.typed(posture, "read", "kTyped01CNTRL", client_key("t"))
+    assert caught.value.code == "TEST_POSTURE_REAL_SECRET"
+    assert client_key("t") not in str(caught.value)
+    for client_id, typed_secret in (("k with spaces", secret), ("", secret),
+                                    ("kTyped01CNTRL", "")):
+        with pytest.raises(errors.LocalError) as caught:
+            credentials.typed(posture, "read", client_id, typed_secret)
+        assert caught.value.code == "CREDENTIAL_MALFORMED"
+
+
+def test_store_writes_the_secret_then_its_metadata_0600_in_a_tightened_directory(tmp_path,
+                                                                                 syscalls):
+    environ = {"TAILNET_API_BASE": "http://127.0.0.1:9", "TAILNET_HOME": str(tmp_path / "tn")}
+    posture = Posture.from_env(environ, real_home=tmp_path / "home")
+    posture.config_dir.mkdir(parents=True)
+    posture.config_dir.chmod(0o755)
+    cred = credentials.typed(posture, "write", "kTyped02CNTRL", fixture_secret("typed0043"))
+    written = credentials.store(posture, cred, granted_scope=WRITE_SCOPE,
+                                set_at="2026-10-26T20:00:00Z", tags=("tag:fleet",),
+                                tags_source="typed")
+    config = posture.config_dir
+    assert written == (config / "write.secret", config / "write.json")
+    assert config.stat().st_mode & 0o777 == 0o700
+    renames = [Path(args[1]).name for event, args in syscalls.events if event == "os.rename"]
+    assert renames == ["write.secret", "write.json"]
+    assert (config / "write.secret").read_text() == fixture_secret("typed0043") + "\n"
+    meta = credentials.load_write_meta(posture)
+    assert (meta.client_id, meta.tags, meta.tags_source, meta.granted_scope) == (
+        "kTyped02CNTRL", ("tag:fleet",), "typed", WRITE_SCOPE)
+    for name in ("write.secret", "write.json"):
+        assert (config / name).stat().st_mode & 0o777 == 0o600
+    cred = credentials.typed(posture, "read", "kTyped03CNTRL", fixture_secret("typed0044"))
+    credentials.store(posture, cred, granted_scope=READ_SCOPES, set_at="2026-10-26T20:00:00Z")
+    loaded = credentials.load_read(posture)
+    assert (loaded.client_id, loaded.secret, loaded.granted_scope) == (
+        "kTyped03CNTRL", fixture_secret("typed0044"), READ_SCOPES)
+    assert "tags" not in json.loads((config / "read.json").read_text())

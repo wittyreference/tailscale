@@ -14,7 +14,7 @@ from tailnet.output import format_utc, warn
 from tailnet.redact import REDACTOR
 
 __all__ = ["READ_SCOPES", "ReadToken", "Token", "cache_expiry", "cache_usable", "cacheable",
-           "mint"]
+           "discard_cache", "mint", "store_cache"]
 
 TOKEN_PATH = "/oauth/token"
 FORM = "application/x-www-form-urlencoded"
@@ -220,6 +220,26 @@ def _discard(path):
     return True
 
 
+def store_cache(posture, token):
+    """Write a read token to the 0600 cache (§9.3), atomically; only a read-only read token.
+
+    Any other token is refused as a bug: a token that can write never touches disk
+    (invariant 3). The caller decides what a cache that cannot be written means.
+    """
+    if token.role != "read" or not token.cacheable:
+        raise ValueError("only a read token whose every scope ends in :read is ever cached")
+    doc = {"v": 1, "client_id": token.client_id, "access_token": token.access_token,
+           "scope": token.scope, "minted_at": format_utc(token.minted_at),
+           "expires_at": format_utc(token.expires_at)}
+    secure_files.write_private_atomic(posture.config_dir / CACHE_NAME,
+                                      json.dumps(doc).encode("utf-8"))
+
+
+def discard_cache(posture):
+    """Remove the read-token cache if it is there; True when nothing is left behind."""
+    return _discard(posture.config_dir / CACHE_NAME)
+
+
 def _drop_unsafe_cache(path):
     """Unlink a cache that failed the §8.2 checks, unread, and say how long it stays dangerous.
 
@@ -329,11 +349,8 @@ class ReadToken:
 
     def _store(self, token):
         """Write the cache atomically, 0600; a cache that cannot be written only costs a mint."""
-        doc = {"v": 1, "client_id": token.client_id, "access_token": token.access_token,
-               "scope": token.scope, "minted_at": format_utc(token.minted_at),
-               "expires_at": format_utc(token.expires_at)}
         try:
-            secure_files.write_private_atomic(self._path, json.dumps(doc).encode("utf-8"))
+            store_cache(self._posture, token)
         except (LocalError, OSError) as exc:
             reason = exc.message if isinstance(exc, LocalError) else exc.strerror
             warn("TOKEN_CACHE_UNWRITABLE",

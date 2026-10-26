@@ -4,6 +4,7 @@
 import json
 import os
 import re
+import stat
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -339,9 +340,65 @@ def mode(posture):
     return "two-client"
 
 
-def set_interactive(posture, role, io):
-    """Store a client typed at MC's terminal (§8.4). Not built yet: §29 item 26."""
-    raise NotImplementedError("`tailnet credentials set` lands with DESIGN.md §29 item 26")
+def typed(posture, role, client_id, secret):
+    """The client MC typed at the terminal for `credentials set`, held to the rules a loaded one is.
+
+    The secret is registered with the redactor before any check, so no refusal, warning or
+    traceback after this point can show it; a message names the problem, never the value.
+    """
+    _register(secret)
+    origin = f"the {role} client typed at the terminal"
+    if not _CLIENT_ID.fullmatch(client_id):
+        raise _malformed(origin, "the client ID must be the ID as the console shows it, with no "
+                                 "spaces")
+    if not secret:
+        raise _malformed(origin, "the secret is empty")
+    _check_secret(posture, secret, origin)
+    return Credential(role, client_id, secret, None, None)
+
+
+def ensure_config_dir(posture):
+    """Create the config directory 0700, or tighten it to 0700, and return it (§8.4 step 3).
+
+    A directory that is a symlink or belongs to someone else is refused: whoever controls it
+    could swap the files written into it.
+    """
+    path = posture.config_dir
+    try:
+        path.mkdir(mode=0o700, parents=True, exist_ok=True)
+        st = os.lstat(path)
+    except OSError as exc:
+        raise LocalError("CREDENTIAL_UNSAFE", f"cannot create {path}: {exc.strerror}") from None
+    if not stat.S_ISDIR(st.st_mode) or st.st_uid != os.geteuid():
+        raise LocalError("CREDENTIAL_UNSAFE", f"refusing {path}: it is not a directory you own")
+    if stat.S_IMODE(st.st_mode) != 0o700:
+        os.chmod(path, 0o700)
+    return path
+
+
+def store(posture, cred, *, granted_scope, set_at, tags=None, tags_source=None):
+    """Write <role>.secret, then <role>.json naming it with `file:`, each 0600 and atomic (§8.5).
+
+    The secret goes first, so an interruption leaves a secret nothing names yet rather than
+    metadata pointing at a secret that is not there. Both roles name their secret with `file:`
+    (§8.1), so status, doctor and the guard read the metadata without opening it. Returns the
+    two paths written.
+    """
+    config = ensure_config_dir(posture)
+    role = cred.role
+    secret_path, doc_path = config / f"{role}.secret", config / f"{role}.json"
+    doc = {"v": 1, "role": role, "client_id": cred.client_id,
+           "client_secret": f"file:{secret_path}", "set_at": set_at,
+           "granted_scope": granted_scope}
+    if role == "write":
+        doc.update(tags=list(tags or ()), tags_source=tags_source)
+    try:
+        secure_files.write_private_atomic(secret_path, (cred.secret + "\n").encode("utf-8"))
+        secure_files.write_private_atomic(doc_path, json.dumps(doc).encode("utf-8"))
+    except OSError as exc:
+        raise LocalError("CREDENTIAL_UNSAFE", f"cannot write the {role} client into {config}: "
+                                              f"{exc.strerror}") from None
+    return secret_path, doc_path
 
 
 def _metadata_for_log(posture, role):
