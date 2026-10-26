@@ -225,6 +225,10 @@ def test_no_secret_or_token_reaches_stdout_stderr_audit_or_any_file_outside_conf
     # Passing commands: a mint, then a cached read, in both output forms.
     assert run("device", "list").returncode == 0
     assert run("--json", "device", "list").returncode == 0
+    # dns, whose best-effort configuration read is refused with the token quoted back.
+    serve_dns(loopback, (403, {}, {"message": f"forbidden for Bearer {READ_TOKEN}"}))
+    assert run("dns").returncode == 0
+    assert run("--json", "dns").returncode == 0
     # A server error that quotes the token and the secret back: the message is shown redacted.
     echo = f"internal: saw Bearer {READ_TOKEN} with client_secret={read_secret}"
     loopback.route("GET", DEVICES, (500, {}, {"message": echo}))
@@ -376,7 +380,90 @@ def test_test_posture_never_runs_tailscale(cli, loopback, configured):
     # so a clean exit is the proof.
     write_protected(configured, PROTECTED)
     serve_devices(loopback)
-    for args in (["device", "list"], ["--json", "device", "list"]):
+    serve_dns(loopback)
+    for args in (["device", "list"], ["--json", "device", "list"], ["dns"], ["--json", "dns"]):
         result = cli(*args)
         assert result.returncode == 0, result.stderr
         assert "netguard" not in result.stderr
+
+
+DNS = API + "/tailnet/-/dns/"
+DNS_PARTS = ("nameservers", "preferences", "searchpaths", "split-dns")
+
+
+def serve_dns(loopback, configuration=None, **overrides):
+    """Route the four dns:read endpoints with the spec's examples, and the combined configuration.
+
+    `configuration` is the reply for /dns/configuration (the spec example when None);
+    `overrides` replace one endpoint's reply by its fixture name, such as preferences=(500, …).
+    """
+    loopback.route("POST", TOKEN, token_reply(READ_TOKEN))
+    for part, fixture in zip(DNS_PARTS, ("nameservers", "preferences", "searchpaths", "split")):
+        reply = overrides.get(fixture) or (200, {"X-Tailscale-Request-Id": f"REQ-{part}"},
+                                           body("api", f"dns-{fixture}"))
+        loopback.route("GET", DNS + part, reply)
+    loopback.route("GET", DNS + "configuration", configuration or (
+        200, {"X-Tailscale-Request-Id": "REQ-configuration"}, body("api", "dns-configuration")))
+
+
+def test_dns_combines_the_four_endpoints_and_tolerates_a_configuration_refusal(cli, loopback,
+                                                                              configured):
+    serve_dns(loopback, (403, {"X-Tailscale-Request-Id": "REQ-cfg"},
+                         {"message": "not authorized for this endpoint"}))
+    result = cli("--json", "dns")
+    assert result.returncode == 0, result.stderr
+    env = envelope(result)
+    assert (env["command"], env["outcome"]) == ("dns", "ok")
+    data = env["data"]
+    assert data["nameservers"] == ["8.8.8.8", "1.2.3.4"]
+    assert data["magicDNS"] is True
+    assert data["searchPaths"] == ["user1.example.com", "user2.example.com"]
+    assert data["splitDns"] == {"example.com": ["1.1.1.1", "1.2.3.4"], "other.com": ["2.2.2.2"]}
+    # The combined endpoint is not in dns:read's documented list (critic Q23): its refusal is
+    # reported, and the four documented reads stand without it.
+    assert data["configuration"] == {"status": 403, "body": None}
+    [refused] = [w for w in env["warnings"] if w["code"] == "DNS_CONFIGURATION_REFUSED"]
+    assert "403" in refused["message"] and refused["source"] == "critic Q23"
+    # The local view needs tailscale, which test posture never runs.
+    assert data["local"] == {"accept_dns": None, "self_dnsname": None, "resolves": None,
+                             "addresses": [], "error": "not run: test posture"}
+    reads = [r for r in loopback.requests if r.path.startswith(DNS)]
+    assert [r.path[len(DNS):] for r in reads] == [*DNS_PARTS, "configuration"]
+    assert {r.method for r in reads} == {"GET"}
+    assert {r.header("authorization") for r in reads} == {f"Bearer {READ_TOKEN}"}
+    assert env["request_ids"] == ["REQ-nameservers", "REQ-preferences", "REQ-searchpaths",
+                                  "REQ-split-dns", "REQ-cfg"]
+
+
+def test_dns_shows_the_combined_configuration_when_it_is_served(cli, loopback, configured):
+    serve_dns(loopback)
+    result = cli("--json", "dns")
+    assert result.returncode == 0, result.stderr
+    configuration = envelope(result)["data"]["configuration"]
+    assert configuration == {"status": 200, "body": body("api", "dns-configuration")}
+    human = cli("dns")
+    assert human.returncode == 0, human.stderr
+    lines = human.stdout.splitlines()
+    assert re.fullmatch(rf"OK: DNS settings for the tailnet \(as of {TIME}\)", lines[0])
+    assert "nameservers: 8.8.8.8, 1.2.3.4" in lines
+    assert "MagicDNS: on" in lines
+    assert "search paths: user1.example.com, user2.example.com" in lines
+    assert "split DNS: example.com → 1.1.1.1, 1.2.3.4; other.com → 2.2.2.2" in lines
+    assert "configuration: read (HTTP 200)" in lines
+    assert "local view: not run (test posture)" in lines
+
+
+def test_a_failing_documented_dns_read_exits_4(cli, loopback, configured):
+    serve_dns(loopback, preferences=(500, {}, {"message": "internal"}))
+    result = cli("--json", "dns")
+    assert (result.returncode, envelope(result)["error"]["code"]) == (4, "API_SERVER")
+    serve_dns(loopback, preferences=(200, {}, {"magic": "yes"}))
+    result = cli("--json", "dns")
+    assert (result.returncode, envelope(result)["error"]["code"]) == (4, "API_BAD_RESPONSE")
+
+
+def test_dns_without_a_read_credential_exits_3_and_sends_nothing(cli, loopback, home):
+    serve_dns(loopback)
+    result = cli("--json", "dns")
+    assert (result.returncode, envelope(result)["error"]["code"]) == (3, "CREDENTIAL_MISSING")
+    assert loopback.requests == []

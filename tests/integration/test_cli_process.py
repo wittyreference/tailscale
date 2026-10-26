@@ -10,13 +10,14 @@ RUN_CLI = Path(__file__).resolve().parents[1] / "run_cli.py"
 
 def test_the_cli_process_prints_one_envelope_and_the_test_banner(cli, loopback):
     result = cli("--json", "dns")
-    assert result.returncode == 1
+    assert result.returncode == 3
     env = json.loads(result.stdout)
-    assert (env["command"], env["posture"], env["error"]["code"]) == ("dns", "test", "INTERNAL")
+    assert (env["command"], env["posture"], env["error"]["code"]) == (
+        "dns", "test", "CREDENTIAL_MISSING")
     assert result.stderr.startswith(
         f"TEST POSTURE: API {loopback.base_url}, home {cli.home.resolve()}. "
         "Nothing here touches the real tailnet.\n")
-    # The skeleton contacts nothing: no command is built yet.
+    # With no read credential in the test home, nothing is contacted.
     assert loopback.requests == []
 
 

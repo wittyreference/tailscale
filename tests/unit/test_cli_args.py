@@ -200,9 +200,9 @@ def test_the_command_set_is_exactly_the_designed_fourteen():
 
 
 def test_a_command_not_built_yet_names_the_item_that_builds_it(capsys):
-    code, env = run_json(capsys, "dns")
+    code, env = run_json(capsys, "doctor")
     assert (code, env["error"]["code"], env["outcome"]) == (1, "INTERNAL", "error")
-    assert "not built yet" in env["error"]["message"] and "§29 item 22" in env["error"]["message"]
+    assert "not built yet" in env["error"]["message"] and "§29 item 25" in env["error"]["message"]
 
 
 def test_test_posture_announces_itself_on_every_run(capsys, test_posture):
@@ -251,5 +251,7 @@ def test_python_dash_m_tailnet_runs_the_cli(capsys, monkeypatch):
     monkeypatch.setattr(sys, "argv", ["tailnet", "--json", "dns"])
     with pytest.raises(SystemExit) as stop:
         runpy.run_module("tailnet", run_name="__main__", alter_sys=True)
-    assert stop.value.code == 1
-    assert json.loads(capsys.readouterr().out)["command"] == "dns"
+    # The test home holds no read credential, so dns stops at exit 3 before any request.
+    assert stop.value.code == 3
+    env = json.loads(capsys.readouterr().out)
+    assert (env["command"], env["error"]["code"]) == ("dns", "CREDENTIAL_MISSING")

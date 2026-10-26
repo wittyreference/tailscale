@@ -314,6 +314,23 @@ answered", and an agent that read an unanswered list as "unprotected" would plan
 then refuses; the listing changes nothing, while the guard loads the same file itself and refuses
 on it; and the import runs one way, so §6's no-cycle rule holds.
 
+**A23. (build, 2026-10-26)** §4 lists every file and has no module for `dns`, and §18 gives its
+JSON as `local {accept_dns, self_dnsname, resolves, error}` and `configuration {status,
+body|null}` with a refusal that "is reported"; it was built as `src/tailnet/dns.py`, after
+`selfnode` and before `cli` in §6's order; with `local.addresses` (what the MagicDNS name
+resolved to) added; with a refused configuration read reported as the warning
+`DNS_CONFIGURATION_REFUSED` [critic Q23] beside `configuration {status, body: null}`; with a
+name that did not resolve reported as `MAGICDNS_UNRESOLVED` [critic F3.6], naming
+`accept-dns=false` as a lead and saying its being the cause is not established; with a `null`
+nameserver or search-path list read as empty while a missing key or another type is
+`API_BAD_RESPONSE`; with each local read limited to 5 s; and with the local view `not run: test
+posture` there; because `cli.py` is grammar and dispatch only and no listed module owns DNS; a
+name that resolves to the wrong address is as telling as one that does not resolve; agents read
+warnings, not prose, for what went wrong; §18 marks the accept-dns link an inference; Go encodes
+an empty list as `null` (whether this API does is **[unverified]**), while a missing key is a
+different body; a stalled daemon must not hold the command; and test posture never runs
+tailscale or leaves loopback.
+
 ---
 
 ## 0. The design on one page

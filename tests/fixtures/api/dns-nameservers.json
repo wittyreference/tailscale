@@ -1,0 +1,4 @@
+{
+  "_source": "spec 1531-1557: the listDnsNameservers 200 body, its dns example",
+  "dns": ["8.8.8.8", "1.2.3.4"]
+}
