@@ -262,6 +262,18 @@ inference §11.2 forbids; a string keeps `owner.value` one type; a tag list of t
 would make a tagged device look user-owned to the guard; the envelope reports the calls that
 produced its data; and the list never guesses self or protection.
 
+**A19. (build, 2026-10-26)** §11.4 said the protected file must pass §8.2, and §5.5 has
+`PROTECTED_MALFORMED` but no code for an unsafe protected file; §11.4's grammar did not say what a
+line naming two devices means, nor whether `protects` covers self; it was built to refuse an
+unsafe protected file (a symlink, a hard link, any group or other bit, another owner, over 64 KiB,
+not UTF-8) as `PROTECTED_MALFORMED`, exit 3, with a message naming the problem and MC's fix; to
+refuse a line that names two things; to word every refusal by line number, never quoting the
+file; and to have `protects` name the self line's device as protected; because
+`CREDENTIAL_UNSAFE` would point the reader at the credentials when the protected file is the one
+in the way, a line holding two names is a typo the CLI must not settle by guessing, the file sits
+behind a deny rule so its text should not reach a transcript through an error, and §11.4 says
+self is always protected against tag writes, listed or not.
+
 ---
 
 ## 0. The design on one page
