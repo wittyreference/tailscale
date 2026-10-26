@@ -302,6 +302,18 @@ the environment says whether `CLAUDE_CONFIG_DIR` is set, `~/.claude` cannot name
 FIFO put in place of the settings file would hang a blocking read, and rules that cannot be read
 cannot vouch for a gate, so `--apply` must not go ahead on them.
 
+**A22. (build, 2026-10-26)** §11.2 gave `device list`'s JSON as `data.devices[]`, `count` and
+`self_node_id`, and §8.2 says a protected file that fails to load exits 3; it was built with
+`data.self` (`known`, `nodeId`, `hostname`, `source`, `id_agrees`, `reason`) and
+`data.protected_file` (`answered`, `unanswered` or `unreadable`) beside them; with each device's
+`self` and `protected` left `null` while self is unknown or the list is unanswered or unreadable;
+with an unknown self and an unreadable protected file raised as warnings, MC's fix in `next`,
+rather than failing the listing; and with `devices` importing `selfnode` and `protected`, which
+§6 places in the same tier; because `null` alone cannot tell "not listed" from "MC has not
+answered", and an agent that read an unanswered list as "unprotected" would plan writes the guard
+then refuses; the listing changes nothing, while the guard loads the same file itself and refuses
+on it; and the import runs one way, so §6's no-cycle rule holds.
+
 ---
 
 ## 0. The design on one page

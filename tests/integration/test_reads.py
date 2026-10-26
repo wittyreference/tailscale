@@ -296,3 +296,87 @@ def test_an_unsafe_override_exits_3_and_contacts_nothing(cli, loopback, configur
         assert refused["posture"] == "unknown"
     assert loopback.requests == []
     assert not configured.state_dir.exists()
+
+
+def write_protected(posture, text, mode=0o600):
+    """MC's protected file in the test home, written the way MC's here-document leaves it."""
+    path = posture.config_dir / "protected"
+    path.write_text(text, encoding="utf-8")
+    path.chmod(mode)
+    return path
+
+
+PROTECTED = """\
+self nFactory1CNTRL     # claude-factory
+spec5                   # Elmer console
+nPi5x001CNTRL           # pi5
+"""
+
+
+def test_device_list_names_self_and_the_protected_devices(cli, loopback, configured):
+    write_protected(configured, PROTECTED)
+    serve_devices(loopback)
+    result = cli("--json", "device", "list")
+    assert result.returncode == 0, result.stderr
+    data = envelope(result)["data"]
+    assert data["self_node_id"] == "nFactory1CNTRL"
+    # In test posture self is the protected file's self line; no tailscale is run (§11.3).
+    assert data["self"] == {"known": True, "nodeId": "nFactory1CNTRL",
+                            "hostname": "claude-factory", "source": "line", "id_agrees": None,
+                            "reason": None}
+    assert data["protected_file"] == "answered"
+    marks = {d["hostname"]: (d["self"], d["protected"]) for d in data["devices"]}
+    assert marks == {
+        "claude-factory": (True, "the self line: self is always protected"),
+        "spec5": (False, "listed as spec5: Elmer console"),
+        "nomad-b": (False, None),
+        "pi5": (False, "listed as nPi5x001CNTRL: pi5"),
+        "albini": (False, None),
+        "Michaels-iPhone": (False, None),
+    }
+    human = cli("device", "list")
+    rows = {line.split()[0]: line.split()[-1] for line in human.stdout.splitlines()[2:-1]}
+    assert rows["claude-factory"] == "self,protected"
+    assert rows["spec5"] == "protected"
+    assert rows["albini"] == "-"
+
+
+def test_without_a_protected_file_self_is_unknown_and_the_list_says_unanswered(cli, loopback,
+                                                                              configured):
+    serve_devices(loopback)
+    result = cli("--json", "device", "list")
+    assert result.returncode == 0, result.stderr
+    env = envelope(result)
+    data = env["data"]
+    assert (data["self_node_id"], data["protected_file"]) == (None, "unanswered")
+    assert data["self"]["known"] is False and "self line" in data["self"]["reason"]
+    # Unknown is not "not self" and unanswered is not "unprotected": both stay null.
+    assert {(d["self"], d["protected"]) for d in data["devices"]} == {(None, None)}
+    [unknown] = [w for w in env["warnings"] if w["code"] == "SELF_UNKNOWN"]
+    assert "--apply" in unknown["message"]
+
+
+def test_an_unsafe_protected_file_is_reported_and_the_list_still_answers(cli, loopback,
+                                                                        configured):
+    path = write_protected(configured, PROTECTED, mode=0o644)
+    serve_devices(loopback)
+    result = cli("--json", "device", "list")
+    assert result.returncode == 0, result.stderr
+    env = envelope(result)
+    assert env["data"]["protected_file"] == "unreadable"
+    assert "PROTECTED_MALFORMED" in [w["code"] for w in env["warnings"]]
+    # The fix is MC's, and the envelope says so.
+    assert {"who": "mc", "do": f"chmod 600 {path}"}.items() <= env["next"][0].items()
+    assert {(d["self"], d["protected"]) for d in env["data"]["devices"]} == {(None, None)}
+
+
+def test_test_posture_never_runs_tailscale(cli, loopback, configured):
+    # Every command that finds self, or reads the local view, runs here in test posture. The
+    # CLI process runs under netguard, which crashes it on any attempt to start tailscale,
+    # so a clean exit is the proof.
+    write_protected(configured, PROTECTED)
+    serve_devices(loopback)
+    for args in (["device", "list"], ["--json", "device", "list"]):
+        result = cli(*args)
+        assert result.returncode == 0, result.stderr
+        assert "netguard" not in result.stderr

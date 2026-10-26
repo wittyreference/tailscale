@@ -6,8 +6,8 @@ import re
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta, timezone
 
-from tailnet import api, output
-from tailnet.errors import ApiError, Refused
+from tailnet import api, output, protected, selfnode
+from tailnet.errors import ApiError, LocalError, Refused
 from tailnet.output import Envelope, format_utc
 
 # A key closer than this to expiry is worth a warning before it lapses and the device has
@@ -332,8 +332,35 @@ def render_table(devices, now):
     return lines
 
 
+def _marked(posture, found):
+    """Mark each device as self or not and protected or not, as far as can be known.
+
+    Returns the marked devices, the SelfNode, the protected file's state ("answered",
+    "unanswered" or "unreadable"), the warnings raised and MC's next steps. A list is a read,
+    so a self that is unknown or a protected file that cannot be read is reported, not fatal;
+    the write guard makes its own decision from the same sources.
+    """
+    raised, steps = [], []
+    try:
+        listed = protected.load(posture)
+        state = "unanswered" if listed is None else "answered"
+    except LocalError as exc:
+        listed, state = None, "unreadable"
+        raised.append(output.warn(exc.code, f"{exc.message}; the list shows no device as "
+                                            "protected, and tag writes are refused"))
+        steps.extend(exc.next)
+    me = selfnode.resolve_self(posture, found, listed)
+    if not me.known:
+        raised.append(output.warn(me.refusal, f"self is unknown: {me.reason}; every --apply is "
+                                              "refused until it is known"))
+    marked = [annotate(d, is_self=(d.node_id == me.device.node_id) if me.known else None,
+                       protected=listed.protects(d) if listed is not None else None)
+              for d in found]
+    return marked, me, state, raised, steps
+
+
 def run_list(posture, args):
-    """`tailnet device list`: every device with all fields, its warnings, and the whole table."""
+    """`tailnet device list`: every device with all fields, self and protection, warnings, the table."""
     session = api.session(posture)
     reply = api.list_devices(session)
     now = datetime.now(timezone.utc)
@@ -343,13 +370,16 @@ def run_list(posture, args):
     except ApiError as exc:
         raise ApiError(exc.code, f"{response.where} → {response.status}: {exc.message}",
                        http_status=response.status, request_id=response.request_id) from None
-    raised = [output.warn(code, message, source)
-              for device in found for code, message, source in warnings(device, now)]
+    found, me, state, raised, steps = _marked(posture, found)
+    raised += [output.warn(code, message, source)
+               for device in found for code, message, source in warnings(device, now)]
     count = len(found)
     headline = f"OK: {count} devices" + (f", {len(raised)} warnings" if raised else "")
     return Envelope(
         "device list", posture.kind,
         data={"devices": [device.to_dict(now) for device in found], "count": count,
-              "self_node_id": None},
-        warnings=raised, request_ids=[response.request_id] if response.request_id else [],
+              "self_node_id": me.device.node_id if me.known else None, "self": me.to_dict(),
+              "protected_file": state},
+        warnings=raised, next=steps,
+        request_ids=[response.request_id] if response.request_id else [],
         measured_at=format_utc(now), headline=headline, lines=render_table(found, now))
