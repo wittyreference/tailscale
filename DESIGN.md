@@ -886,6 +886,17 @@ explanation reports as a second finding, and a reset or probe error falls to `RE
 the handshake on :22 and asks the ssh section only at SSH login [tsssh L61, L118], so the ssh
 section can produce an open port and a refused login, never a timeout.
 
+**A51. (review, 2026-10-26) finding 17:** §15.2 step 8 and A32 (8) gave all three host-side
+verdicts one block, whose `tcpdump -ni tailscale0` line reads "SYN seen → passed Tailscale's
+filter" and whose last line starts with `ufw status`; for `TS_SSH_TIMEOUT_UNEXPLAINED` that capture
+can never show a SYN, so an empty one read as a Tailscale drop, and ufw is beside the point. The
+block for that verdict now leaves both out, says why in a comment line, and ends with `tailscale
+get ssh ; tailscale get shields-up`, keeping the metrics and `journalctl` `Drop:` lines, which
+still tell a policy drop apart; the other two verdicts keep the full block; because while
+Tailscale SSH takes :22, tailscaled's netstack consumes the SYN after the filter [tsssh L63, L118;
+netstack.go:1294-1296, :1497-1504 at `de16943c`], so it is never written to tailscale0 and never
+reaches the host firewall.
+
 ---
 
 ## 0. The design on one page

@@ -426,6 +426,36 @@ def test_the_on_host_block_names_the_destination_port_and_source():
     assert "'tcp port 22'" in bare[3] and "src host" not in bare[3]
 
 
+def test_the_on_host_block_for_a_tailscale_ssh_timeout_drops_what_cannot_see_port_22():
+    # While Tailscale SSH takes :22, tailscaled's netstack consumes the SYN after the filter
+    # [tsssh L63, L118], so it is never written to tailscale0 and never reaches the host
+    # firewall: an empty capture there would read as a Tailscale drop when it is not (A51).
+    found = inventory()
+    me = diagnose.Source("self", found["claude-factory"], self_source="line")
+
+    def block(code):
+        """The block MC is handed for one host-side verdict on spec5:22."""
+        [step] = [s for s in diagnose.next_steps(code, found["spec5"], port=22, user="spec5",
+                                                 source=me, ids=("tag:dev",),
+                                                 inventory=list(found.values()))
+                  if s["who"] == "mc"]
+        return step["do"].splitlines()
+
+    ts_ssh = block("TS_SSH_TIMEOUT_UNEXPLAINED")
+    assert not [line for line in ts_ssh if "tcpdump" in line and not line.startswith("#")]
+    assert not [line for line in ts_ssh if "ufw" in line and not line.startswith("#")]
+    # The lines that still tell a policy drop apart stay, with `tailscale get ssh`.
+    assert ts_ssh[0] == "# On spec5, while the agent retries from claude-factory:"
+    assert "inbound_dropped_packets_total" in ts_ssh[1] and "journalctl" in ts_ssh[2]
+    assert any("netstack" in line for line in ts_ssh if line.startswith("#"))
+    assert ts_ssh[-1].startswith("tailscale get ssh")
+    # The plain OpenSSH verdicts keep the capture and the firewall check.
+    for code in ("HOST_SIDE_DROP", "REFUSED_BY_HOST"):
+        lines = block(code)
+        assert any(line.startswith("sudo timeout 20 tcpdump -ni tailscale0") for line in lines)
+        assert lines[-1].startswith("sudo ufw status verbose")
+
+
 def test_a_port_or_ssh_user_outside_the_rules_is_a_usage_error():
     def args(port=22, ssh_user=None):
         """The parsed arguments check_args reads."""

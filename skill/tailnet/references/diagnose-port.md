@@ -140,11 +140,17 @@ sudo timeout 20 tcpdump -ni tailscale0 -c 5 'tcp port 22 and src host <droplet-1
 sudo ufw status verbose ; tailscale get ssh ; tailscale get shields-up ; tailscale get netfilter-mode
 ```
 
+For `TS_SSH_TIMEOUT_UNEXPLAINED` the block leaves out the `tcpdump` and `ufw` lines and ends with
+`tailscale get ssh ; tailscale get shields-up` (DESIGN A51): while Tailscale SSH takes port 22,
+tailscaled's netstack consumes the SYN after the filter [SSH L63, L118] (`netstack.go:1294-1296,
+:1497-1504` [source-code]), so neither `tailscale0` nor the host firewall ever sees it, and an empty
+capture there proves nothing.
+
 | Line | What it proves |
 |---|---|
 | `tailscale metrics print` | `tailscaled_inbound_dropped_packets_total` with `reason="acl"` counts "packets dropped by Tailscale access control" [metrics L132-144]. Rising across a retry means the policy dropped them. Needs client v1.78.0 or later [metrics L9]. How `print` renders the label is [unverified], hence the grep |
 | `journalctl … 'Drop: TCP{…:22}'` | The receiving filter logs a policy drop as `Drop: TCP{<src>:<sport> > <dst>:22} <len> no rules matched` (`filter.go:364, :559`, `packet.go:82-98` [source-code]). Drop logging is rate-limited (`filter.go:338-366`) |
-| `tcpdump -ni tailscale0` | Tailscale's inbound filter runs before the packet is written to the TUN device (`wrap.go:1306, :1325` [source-code]), so a SYN seen on `tailscale0` already passed the policy [inference]. A SYN with no SYN-ACK means host firewall or sshd. General Linux, not Tailscale docs. Kernel-TUN mode only: userspace networking has no `tailscale0` |
+| `tcpdump -ni tailscale0` | Tailscale's inbound filter runs before the packet is written to the TUN device (`wrap.go:1306, :1325` [source-code]), so a SYN seen on `tailscale0` already passed the policy [inference]. A SYN with no SYN-ACK means host firewall or sshd. General Linux, not Tailscale docs. Kernel-TUN mode only: userspace networking has no `tailscale0`. Blind on a Tailscale SSH host's port 22, where netstack takes the SYN first, so the block leaves it out there |
 | `ufw status verbose` | Look for `Anywhere on tailscale0 ALLOW IN`; Tailscale's own ufw guide adds it with `sudo ufw allow in on tailscale0` [ufw L129-139] |
 | `tailscale get ssh` | Whether Tailscale SSH is on, which claims port 22 [SSH L40]. `tailscale get` takes the same names as `tailscale set` [cli L409-428] |
 | `tailscale get shields-up` | Shields-up blocks incoming tailnet connections. It would also block 443, so it is unlikely when 443 works [inference] |
@@ -248,7 +254,7 @@ Each is reported as unknown when it matters, never filled in.
 
 Read or fetched 2026-10-26.
 
-- `DESIGN`: `DESIGN.md` §5.2, §5.3, §15, §24, §26 and Amendments A31, A32 and A50 in this repo.
+- `DESIGN`: `DESIGN.md` §5.2, §5.3, §15, §24, §26 and Amendments A31, A32, A50 and A51 in this repo.
 - `mc`, `critic`, `api`, `policy-access`: `docs/research/mc-tailnet.md`, `critic.md`,
   `api-surface.md`, `policy-access.md` (all 2026-10-26).
 - `fleet.yaml`: `/home/user/tailnet-ssh/fleet/fleet.yaml` at `2cab922` (2026-10-10).

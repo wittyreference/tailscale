@@ -439,21 +439,33 @@ def peer_has_host_keys(text, addresses):
     return bool(matched[0].get("sshHostKeys")) if len(matched) == 1 else None
 
 
-def on_host_block(dest, port, source, source_ip):
+def on_host_block(dest, port, source, source_ip, *, ts_ssh=False):
     """The paste block MC runs on the destination (§15.2 step 8); the CLI never runs it.
 
     The source cannot reach the destination, which is the problem, so these checks run from
     a session that can. Each line names what it tells apart [pol (d) steps 4-7]; tcpdump and
     ufw are general Linux, not Tailscale's, and how `metrics print` renders the label is
-    unverified, hence the grep.
+    unverified, hence the grep. With `ts_ssh` (a Tailscale SSH timeout) the capture and the
+    firewall check are left out: while Tailscale SSH takes :22, tailscaled's netstack consumes
+    the SYN after the filter, so tailscale0 and the host firewall never see it (A51).
     """
-    capture = f"tcp port {port}" + (f" and src host {source_ip}" if source_ip else "")
-    return "\n".join([
+    lines = [
         f"# On {dest}, while the agent retries from {source}:",
         ("tailscale metrics print | grep -E 'inbound_dropped_packets_total'   "
          "# reason=\"acl\" rising → Tailscale policy drop (client ≥ 1.78)"),
         ("sudo journalctl -u tailscaled --since '-10min' | "
          f"grep -E 'Drop: TCP\\{{[^}}]*:{port}\\}}'   # \"no rules matched\""),
+    ]
+    if ts_ssh:
+        return "\n".join([
+            *lines,
+            ("# No tcpdump on tailscale0 and no ufw here: while Tailscale SSH takes this port, "
+             "tailscaled's netstack consumes the SYN after the filter, so neither ever sees it"),
+            "tailscale get ssh ; tailscale get shields-up",
+        ])
+    capture = f"tcp port {port}" + (f" and src host {source_ip}" if source_ip else "")
+    return "\n".join([
+        *lines,
         (f"sudo timeout 20 tcpdump -ni tailscale0 -c 5 '{capture}'   "
          "# SYN seen → passed Tailscale's filter"),
         ("sudo ufw status verbose ; tailscale get ssh ; tailscale get shields-up ; "
@@ -849,15 +861,17 @@ def next_steps(code, dest, *, port, user, source, ids, inventory):
                        f"add a grant from {sources} to {name} on tcp:{port}, then validate and "
                        "diff; MC applies it in the console; re-run this")]
     if code in HOST_SIDE:
-        return _on_host(dest, name, port=port, user=user, source=source, inventory=inventory)
+        return _on_host(dest, name, port=port, user=user, source=source, inventory=inventory,
+                        ts_ssh=code == "TS_SSH_TIMEOUT_UNEXPLAINED")
     return []
 
 
-def _on_host(dest, name, *, port, user, source, inventory):
+def _on_host(dest, name, *, port, user, source, inventory, ts_ssh=False):
     """Step 8: the block MC runs on the destination, the retry it watches, and the --from
     checks of which of MC's user-owned devices may reach it."""
     me = source.device
-    block = on_host_block(name, port, source.name(), (me.ipv4 or me.ipv6) if me else None)
+    block = on_host_block(name, port, source.name(), (me.ipv4 or me.ipv6) if me else None,
+                          ts_ssh=ts_ssh)
     steps = [{"who": "mc", "needs": "terminal", "do": block,
               "why": f"{name} cannot be reached from here, which is the problem: run this on "
                      "it from a session that can reach it (Termius on your phone, or another "
