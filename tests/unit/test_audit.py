@@ -150,3 +150,13 @@ def test_an_unsafe_log_is_refused_on_read_back(posture):
         with pytest.raises(errors.LocalError) as caught:
             read_back()
         assert caught.value.code == "AUDIT_UNWRITABLE"
+
+
+def test_a_state_directory_that_cannot_be_made_is_audit_unwritable(posture):
+    # A regular file where the state directory belongs: the log can never be written.
+    posture.state_dir.parent.mkdir(parents=True)
+    posture.state_dir.write_bytes(b"")
+    with pytest.raises(errors.LocalError) as caught:
+        audit.append(posture, {"event": "write"}, argv=[])
+    assert caught.value.code == "AUDIT_UNWRITABLE"
+    assert str(posture.state_dir) in caught.value.message

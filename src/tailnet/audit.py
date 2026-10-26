@@ -9,6 +9,7 @@ import sys
 from datetime import datetime, timezone
 
 from tailnet import __version__, secure_files
+from tailnet.errors import LocalError
 from tailnet.redact import redact
 
 # §13.2. A record under any other name would be one no reader looks for, so a typo is
@@ -61,7 +62,12 @@ def append(posture, event, *, argv=None):
     line = redact(json.dumps(record)) + "\n"
     # Parent directories get the default mode; the state directory itself is 0700 (§13.1),
     # and a umask can only narrow that.
-    posture.state_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
+    try:
+        posture.state_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
+    except OSError as exc:
+        # The same answer as a log that will not open: a write that cannot be recorded is
+        # not sent (C9), whichever part of the path is in the way.
+        raise LocalError(_CODE, f"cannot create {posture.state_dir}: {exc.strerror}") from None
     secure_files.append_locked(log_path(posture), line.encode("utf-8"), code=_CODE)
 
 
