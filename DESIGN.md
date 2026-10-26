@@ -760,6 +760,35 @@ inventory, which E9's second half needs; the secret's format is the CLI's to jud
 so the preflight never holds it; MC on a phone should learn everything missing from one run, but
 nothing else is the suite's to read while the posture is wrong; and E2 needs a known self.
 
+**A42. (build, 2026-10-26)** §21.4's table named E1-E17 by what each proves, and §21.5 had `make
+e2e` print M1-M4, without saying how several are measured; they were built (1) with E1 and E14
+reading one session-wide `tailnet doctor --settle --json`, E14 comparing L11's live digest with
+`spec/SHA256SUMS`; (2) with E4 running `credentials forget token` first and counting the
+`token.mint` lines whose `pid` is one of its three reads', and E12 and E13 picking out their own
+`write` lines the same way; (3) with E7 validating the JSON form through `policy validate`, which
+sends it as HuJSON; (4) with E9 trying up to five connected peers until one's output holds a
+pong and asserting that run exited 0, then pinging the highest address in 100.64.0.0/10 that no
+listed device holds and asserting a non-zero exit with no pong, whatever tailscale says there
+**[unverified]**; (5) with E10 diagnosing every tagged device in one run without `--ssh-user`, and
+E11 diagnosing a tagged device `--from` the first user-owned device other than self, asserting no
+probe, identities only, and no self-mode verdict; (6) with E12 adding a tag self already carries,
+and E13 planning every tagged device whose `isExternal` is false; (7) with E16 accepting no cache
+only in `single-client` mode; (8) with E17 also checking that MC's real `settings.json` and real
+`claude mcp get` answer are unchanged, and that uninstall removes the MCP entry, the clone, both
+skills, the launcher and the record; (9) with E8 removing the draft it made; (10) with each run's
+exit, `measured_at` and request IDs printed in a closing report section; and (11) with M1-M4
+printed only after a passing run; because a second `--settle` would cost MC a second set of console
+events for the same answers; one mint is only countable from an empty cache, and other sessions
+may write to MC's log meanwhile; JSON is HuJSON, so the body the server parses is the same, and
+`policy validate` is the CLI's only way to send a file; a pong is the evidence a ping exit can be
+read against, and an address in the netmap's range that nothing holds is what E9's "assigned to no
+listed device" names; the verdict, not which one, is under test, and `--from` exists for the
+user-owned sources §3.2 asks about; a requested no-op means nothing could be sent even if the
+guard failed, and a shared-in device is refused by design (A25); a write-capable grant is never
+cached (§9.2); a temporary `HOME` must never reach MC's real settings (A38); the draft names MC's
+people and hosts and is the suite's own; MC quotes values with their times (Corrections); and make
+stops at the first failing command, so the failure stays the last thing on a phone screen.
+
 ---
 
 ## 0. The design on one page

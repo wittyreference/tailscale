@@ -20,11 +20,13 @@ $(PY):
 test: $(PY)
 	$(PY) -m pytest
 
-# The read-only suite against the real API is §29 item 32. Until it exists this target
-# fails rather than passing on nothing, so nobody reads a green e2e that never ran.
-e2e:
-	@echo "make e2e: the end-to-end suite (DESIGN.md §21.4) is not built yet; it lands with §29 item 32. Nothing was run." >&2
-	@exit 1
+# The read-only suite against the real API (§21.4), run on the droplet with MC's read
+# credential. Without one, or without a Running tailscale, its conftest stops with exit 3
+# naming what is missing; it never skips. The manual checks M1-M4 (§21.5) print only after
+# a passing run, so a failure is always the last thing on the screen.
+e2e: $(PY)
+	$(PY) -m pytest tests/e2e
+	@$(PY) -I tests/e2e/manual_checks.py
 
 # The installer copies the CLI, the skills and the rules into the invoking user's home; it
 # never creates credentials. The dry run prints every change and makes none (§20.6).

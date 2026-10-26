@@ -239,7 +239,63 @@ def test_the_message_numbers_each_piece_and_says_nothing_ran(preflight):
     assert "nothing was run" in text and "never skips" in text
 
 
-# --- The manual checks and the no-skip rule ---
+# --- The suite itself, `make e2e` and the manual checks ---
+
+# §21.4's table, in its order. The names are the contract: each settles one question.
+E_TESTS = [
+    "test_doctor_completes_against_the_real_api",
+    "test_this_droplet_is_self_by_tailscale_ip",
+    "test_device_list_counts_every_device_and_names_self",
+    "test_the_read_token_is_reused_across_invocations",
+    "test_policy_get_hujson_and_json_return_raw_etags",
+    "test_the_live_policy_validates_as_hujson",
+    "test_the_live_policy_validates_as_json",
+    "test_a_fresh_draft_of_the_live_policy_is_ready_after_validate",
+    "test_tailscale_ping_tsmp_exit_codes_on_pong_and_timeout",
+    "test_diagnose_returns_a_known_verdict_for_every_tagged_device",
+    "test_diagnose_from_a_user_owned_device_runs_api_checks_only",
+    "test_a_dry_run_tag_change_on_self_is_refused_without_sending",
+    "test_a_dry_run_disable_key_expiry_plans_without_sending",
+    "test_the_live_openapi_matches_the_pinned_sha256",
+    "test_dns_reads_succeed",
+    "test_the_cached_token_is_0600_and_read_only",
+    "test_install_into_a_temporary_home_pins_upstream_and_registers_mcp",
+]
+
+
+def test_the_e2e_suite_collects_exactly_e1_to_e17_in_order(tmp_path):
+    # Collection imports every e2e module and runs no fixture, so the preflight is not reached
+    # and nothing live happens; the overrides are there in case that ever changed.
+    done = subprocess.run(
+        [sys.executable, "-m", "pytest", "tests/e2e", "--collect-only", "-q", "-p",
+         "no:cacheprovider"], cwd=REPO, capture_output=True, text=True,
+        env={**os.environ, **child_env(tmp_path)}, timeout=300, check=False)
+    assert done.returncode == 0, done.stdout + done.stderr
+    collected = [line.split("::")[-1] for line in done.stdout.splitlines() if "::" in line]
+    assert collected == E_TESTS
+
+
+def test_make_e2e_fails_loudly_with_exit_3_and_never_skips(tmp_path):
+    env = {**os.environ, **child_env(tmp_path)}
+    done = subprocess.run(["make", "-s", "-C", str(REPO), "e2e"], capture_output=True, text=True,
+                          env=env, timeout=300, check=False)
+    said = done.stdout + done.stderr
+    assert done.returncode != 0
+    assert "Error 3" in said
+    assert "TAILNET_API_BASE" in said and "nothing was run" in said
+    assert "skipped" not in said.lower()
+    # The manual checks come only after a passing run, so the failure is the last thing shown.
+    assert "M1." not in said
+
+
+def test_make_e2e_runs_the_suite_then_prints_the_manual_checks():
+    done = subprocess.run(["make", "-n", "-C", str(REPO), "e2e"], capture_output=True, text=True,
+                          timeout=60, check=False)
+    assert done.returncode == 0, done.stderr
+    lines = done.stdout.splitlines()
+    suite = [i for i, line in enumerate(lines) if "-m pytest tests/e2e" in line]
+    checks = [i for i, line in enumerate(lines) if "tests/e2e/manual_checks.py" in line]
+    assert len(suite) == 1 and len(checks) == 1 and suite[0] < checks[0]
 
 
 def test_the_manual_checks_are_m1_to_m4():
@@ -259,7 +315,7 @@ def test_the_manual_checks_are_m1_to_m4():
 def test_nothing_in_the_e2e_suite_can_skip():
     # A skipped live test reads as green to someone glancing at a phone; the suite fails instead.
     files = sorted(E2E.glob("*.py"))
-    assert E2E / "run_live.py" in files
+    assert E2E / "conftest.py" in files and E2E / "test_live.py" in files
     for path in files:
         tree = ast.parse(path.read_text(encoding="utf-8"))
         names = {node.attr for node in ast.walk(tree) if isinstance(node, ast.Attribute)}
