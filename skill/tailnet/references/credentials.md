@@ -147,14 +147,18 @@ per turn and say what it proves.
     3). It refuses to run as root (`RUN_AS_ROOT`), because the files would land in `/root`.
   - The secret must begin with the OAuth client prefix `tskey-client-` [KP L15]. An API access
     token, prefix `tskey-api`, is refused by name [KP L13].
-  - It writes `read.secret` and `read.json` (both 0600), mints one token to verify, and records the
-    granted scope. If that scope holds write power it warns `READ_CLIENT_CAN_WRITE`.
+  - It mints one token to verify the client **before** writing anything, then writes `read.secret`
+    and `read.json` (both 0600) and records the granted scope. A client the token endpoint refuses
+    is never stored, so a working one already in place stays (DESIGN A34). If the granted scope
+    holds write power it warns `READ_CLIENT_CAN_WRITE`.
   - **Proves:** the secret is on disk, 0600, and mints. Exit 0, 2, 3 or 4.
-- **`tailnet credentials set write`** does the same for `write.secret` and `write.json`, then:
-  - deletes both files again (exit 3) unless the granted scope contains `devices:core` (or the
-    legacy `devices`, or `all`);
-  - looks itself up with `GET /tailnet/-/keys/<client_id>` and records its tags, or asks MC to type
-    them as the console shows them (which ID that lookup takes is [unverified], critic Q3);
+- **`tailnet credentials set write`** does the same for `write.secret` and `write.json`, and before
+  it writes either:
+  - stores nothing (`CREDENTIAL_MALFORMED`, exit 3) unless the granted scope contains
+    `devices:core` (or the legacy `devices`, or `all`);
+  - looks itself up with `GET /tailnet/-/keys/<client_id>`, using the token it just minted, and
+    records its tags, or asks MC to type them as the console shows them (which ID that lookup takes
+    is [unverified], critic Q3); typed text that is not tags stores nothing (`TAG_MALFORMED`, exit 2);
   - discards the write token; it is never cached.
 - Each command prints the reminder that every mint is one "Create OAuth access token" event in the
   console's audit log (DESIGN §8.4).
