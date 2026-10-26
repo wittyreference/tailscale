@@ -376,6 +376,33 @@ def marker_bytes(marker):
     return (json.dumps(marker, indent=2) + "\n").encode()
 
 
+def rules_by_file(rules, claude_dir):
+    """The install record's rules as {settings path: {"ask": [...], "deny": [...]}}.
+
+    Each settings file's additions are kept apart because uninstall may take out of a file
+    only what was added to that file: eight of the ten strings read the same in every Claude
+    directory, so one added to another directory's settings may be a rule MC wrote here.
+    A record from before they were kept apart holds one {ask, deny}, read as the Claude
+    directory it names. A file with nothing recorded is left out.
+    """
+    if not isinstance(rules, dict):
+        return {}
+    found = {}
+    flat = {key: rules[key] for key in settings_merge.LISTS if key in rules}
+    entries = {path: entry for path, entry in rules.items() if path not in settings_merge.LISTS}
+    if flat:
+        entries[str(Path(claude_dir) / "settings.json") if isinstance(claude_dir, str)
+                else "(a settings file the record does not name)"] = flat
+    for path, entry in entries.items():
+        if not isinstance(entry, dict):
+            continue
+        lists = {key: [r for r in entry[key] if isinstance(r, str)]
+                 if isinstance(entry.get(key), list) else [] for key in settings_merge.LISTS}
+        if any(lists.values()):
+            found[path] = lists
+    return found
+
+
 def _reason(exc):
     """One line saying why a step stopped, from whatever it raised."""
     if isinstance(exc, OSError) and exc.filename:
@@ -773,12 +800,16 @@ class Installer:
         previous = self.previous or {}
         before = previous.get("added") if isinstance(previous.get("added"), dict) else {}
         added = {name: bool(flag or before.get(name) is True) for name, flag in self.added.items()}
-        recorded = before.get("rules") if isinstance(before.get("rules"), dict) else {}
-        added["rules"] = {key: list(dict.fromkeys(
-            [r for r in recorded.get(key, []) if isinstance(r, str)]
-            + self.rules_added[key])) for key in settings_merge.LISTS}
+        rules = rules_by_file(before.get("rules"), previous.get("claude_dir"))
+        settings = str(self.target.settings)
+        mine = rules.get(settings, {key: [] for key in settings_merge.LISTS})
+        mine = {key: list(dict.fromkeys(mine[key] + self.rules_added[key]))
+                for key in settings_merge.LISTS}
+        if any(mine.values()):
+            rules[settings] = mine
+        added["rules"] = rules
         kept = previous.get("installed_at") if not self.changed else None
-        doc = {"v": 1, "commit": self.commit, "dirty": self.dirty,
+        doc = {"v": 2, "commit": self.commit, "dirty": self.dirty,
                "installed_at": kept or self.stamp, "last_run": self.stamp,
                "claude_dir": str(self.target.claude_dir), "added": added}
         unchanged = ({k: v for k, v in doc.items() if k != "last_run"}
@@ -911,21 +942,50 @@ class Installer:
             self.tell(f"left alone: {DOCS_MCP} now has another URL than {DOCS_MCP_URL}")
 
     def remove_rules(self):
-        """The settings rules the record lists, where each is still present as written."""
+        """The settings rules the record lists for this run's settings file, where each is
+        still present as written; rules recorded for another file stop the step."""
         added = self.previous.get("added")
-        rules = added.get("rules") if isinstance(added, dict) else None
-        outcome = settings_merge.remove_file(self.target.settings,
-                                             rules if isinstance(rules, dict) else {},
+        rules = rules_by_file(added.get("rules") if isinstance(added, dict) else None,
+                              self.previous.get("claude_dir"))
+        settings = str(self.target.settings)
+        outcome = settings_merge.remove_file(self.target.settings, rules.get(settings, {}),
                                              now=self.now, dry_run=self.options.dry_run)
         if outcome.status == "aborted":
             raise StepError(outcome.message)
         if outcome.status == "unchanged":
             self.same(outcome.message)
+        else:
+            self.changed = self.reported = True
+            self.say(("would: " if outcome.status == "would" else "done: ") + outcome.message)
+            for line in outcome.diff.splitlines():
+                self.say(line)
+        others = sorted(path for path in rules if path != settings)
+        if not others:
             return
-        self.changed = self.reported = True
-        self.say(("would: " if outcome.status == "would" else "done: ") + outcome.message)
-        for line in outcome.diff.splitlines():
-            self.say(line)
+        # Only the file this run computed is ever opened (A39 (1)); the others are finished
+        # by a run with their Claude directory, so the record keeps them and only them.
+        if settings in rules:
+            rest = {path: rules[path] for path in others}
+            self.act(f"drop {settings} from the rules in the install record {self.target.record}",
+                     lambda: self._rewrite_rules(rest))
+        how = "; ".join(self._finish_hint(path) for path in others)
+        raise StepError(f"the install record also lists rules added to {', '.join(others)}, "
+                        f"which this run, reversing {settings}, leaves in place; {how}")
+
+    def _finish_hint(self, path):
+        """How MC finishes the rules recorded for another settings file."""
+        if not os.path.isabs(path):
+            return (f"the record names no file for some, so remove them by hand and move "
+                    f"{self.target.record} aside")
+        if path == str(self.target.home / ".claude" / "settings.json"):
+            return f"for {path}, run --uninstall again with CLAUDE_CONFIG_DIR unset"
+        return f"for {path}, run --uninstall again with CLAUDE_CONFIG_DIR={Path(path).parent}"
+
+    def _rewrite_rules(self, rules):
+        """Rewrite the install record with `rules` as its rules, everything else as it was."""
+        doc = {**self.previous, "v": 2, "added": {**self.previous["added"], "rules": rules}}
+        secure_files.write_private_atomic(self.target.record,
+                                          (json.dumps(doc, indent=2) + "\n").encode())
 
     def remove_record(self):
         """The record itself, last, and the share directories left empty; kept if a step stopped."""

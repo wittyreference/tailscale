@@ -8,7 +8,7 @@ import shutil
 import stat
 import subprocess
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -309,7 +309,8 @@ def test_install_into_an_empty_home_creates_every_artifact_with_its_mode(box, up
     rules = gate.rules_for(str(box.claude))
     assert record["added"] == {"lib": True, "launcher": True, "spec": True, "skill": True,
                                "upstream_copy": True, "upstream_clone": True, "mcp": False,
-                               "rules": {"ask": rules["ask"], "deny": rules["deny"]}}
+                               "rules": {str(target.settings): {"ask": rules["ask"],
+                                                                "deny": rules["deny"]}}}
     assert doctor.install_markers(box.claude, target.share)["skill"]["ok"] is True
     # It ends with MC's next steps, in order.
     tail = out[out.index("Next (MC):"):]
@@ -625,6 +626,82 @@ def test_uninstall_keeps_the_record_when_a_step_stops(box):
     assert "settings: STOPPED" in out and "Remove these rules from" in out
     assert target.record.is_file() and "record: kept" in out
     assert target.settings.read_text() == "{not json"
+
+
+MC_ASK = "Bash(*api.tailscale.com*)"
+MC_DENY = "Read(~/.config/tailnet/**)"
+
+
+def default_claude(box):
+    """The same home with CLAUDE_CONFIG_DIR unset: ~/.claude, already holding two of tailnet's
+    exact strings that MC wrote by hand, a deny over the credentials among them."""
+    claude = box.home / ".claude"
+    claude.mkdir(mode=0o700)
+    (claude / "settings.json").write_text(json.dumps(
+        {"permissions": {"ask": [MC_ASK], "deny": [MC_DENY]}}))
+    return replace(box, claude=claude, target=install.Target(box.home, claude, None))
+
+
+def ours(settings):
+    """The permission lists of a settings file."""
+    return json.loads(settings.read_text())["permissions"]
+
+
+@pytest.mark.parametrize("installs, uninstalls", [
+    (("default", "alt"), ("default", "alt")),
+    (("alt", "default"), ("default", "alt")),
+    (("alt", "default"), ("alt", "default")),
+])
+def test_uninstall_takes_out_only_the_rules_added_to_its_own_settings_file(box, installs,
+                                                                           uninstalls):
+    boxes = {"default": default_claude(box), "alt": box}
+    default, alt = boxes["default"], boxes["alt"]
+    for name in installs:
+        code, out = run_installer(boxes[name])
+        assert code == 0, out
+    record = json.loads(box.target.record.read_text())
+    # Each settings file's additions are recorded against that file: the two MC wrote by hand
+    # in ~/.claude were never added there, though the alternate directory needed them.
+    rules = record["added"]["rules"]
+    assert sorted(rules) == sorted([str(default.target.settings), str(alt.target.settings)])
+    assert MC_ASK not in rules[str(default.target.settings)]["ask"]
+    assert MC_DENY not in rules[str(default.target.settings)]["deny"]
+    assert rules[str(alt.target.settings)] == alt.target.rules()
+    first, then = (boxes[name] for name in uninstalls)
+    then_before = then.target.settings.read_bytes()
+    # The first uninstall takes out only what was added to its own file: MC's own ask and
+    # deny rules in ~/.claude stay, the other file is not touched, and the record is kept,
+    # without the finished file, so a run with the other Claude directory can finish it.
+    code, out = run_installer(first, uninstall=True, now=LATER)
+    assert code == 1, out
+    assert ours(default.target.settings)["ask"][0] == MC_ASK
+    assert ours(default.target.settings)["deny"][0] == MC_DENY
+    assert then.target.settings.read_bytes() == then_before
+    assert "settings: STOPPED" in out and str(then.target.settings) in out
+    assert ("CLAUDE_CONFIG_DIR unset" if then is default else f"CLAUDE_CONFIG_DIR={alt.claude}"
+            ) in out
+    kept = json.loads(box.target.record.read_text())["added"]["rules"]
+    assert kept == {str(then.target.settings): rules[str(then.target.settings)]}
+    code, out = run_installer(then, uninstall=True, now=LATER)
+    assert code == 0, out
+    assert ours(alt.target.settings) == {"ask": [], "deny": []}
+    assert ours(default.target.settings) == {"ask": [MC_ASK], "deny": [MC_DENY]}
+    assert not os.path.lexists(box.target.record)
+    for path in (default.target.skill, alt.target.skill, box.target.lib, box.target.launcher):
+        assert not os.path.lexists(path), path
+
+
+def test_a_record_with_rules_in_one_list_is_read_as_its_claude_directory_s(box):
+    # A record written before the rules were keyed by settings file names one Claude
+    # directory, the one its rules were added to when only one was ever used.
+    run_installer(box)
+    record = json.loads(box.target.record.read_text())
+    record["added"]["rules"] = box.target.rules()
+    box.target.record.write_text(json.dumps(record))
+    code, out = run_installer(box, uninstall=True, now=LATER)
+    assert code == 0, out
+    assert ours(box.target.settings) == {"ask": [], "deny": []}
+    assert not os.path.lexists(box.target.record)
 
 
 def test_uninstall_without_claude_says_how_to_remove_the_docs_server(box, tmp_path):

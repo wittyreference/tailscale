@@ -1003,6 +1003,22 @@ because nothing in §20 asks for that refusal, the same directory already receiv
 an earlier backup is never overwritten. §8.2's directory rule still holds for the CLI's own private
 directories.
 
+**A61. (review, 2026-10-26) finding 22:** A38 (3) kept `install.json`'s `rules` as one `{ask,
+deny}`, the union of every run's additions whichever Claude directory each run wrote to, and A39
+(5) only warned when the record named another Claude directory, on the premise that "a rule
+spelled for one Claude directory is not present in another's settings"; that holds for two of the
+ten strings, so after installs into `~/.claude` and a `CLAUDE_CONFIG_DIR`, in either order, an
+uninstall from `~/.claude` deleted MC's own hand-written copies of tailnet's strings there, the
+deny over `~/.config/tailnet` included, exited 0 and deleted the record, leaving the other
+directory's rules with nothing to reverse them. The record (now `"v": 2`) keys `rules` by the
+absolute settings path each run wrote to, `{"<path>": {ask, deny}}`, and a run adds to its own
+file's entry only; a v1 `{ask, deny}` is read as the record's `claude_dir`'s. Uninstall takes out
+of this run's settings file only that file's entry; when entries for other files remain, it drops
+the finished entry from the record, leaves the rest, and stops the settings step naming each file
+and the `CLAUDE_CONFIG_DIR` that finishes it, so the record is kept (A39 (3)); because the
+installer must never loosen what MC set (§20.4 step 2), and A39 (1) still holds: only the path the
+run computes is ever opened, the record's paths are only compared.
+
 ---
 
 ## 0. The design on one page
