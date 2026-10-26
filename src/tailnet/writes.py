@@ -361,25 +361,40 @@ def _apply(attempt, session, plans):
     """--apply once every check has passed: C9, C10, then one POST per target, in order.
 
     POSTs stop at the first target that does not end OK; later ones are not attempted, and
-    no-op targets are skipped without being sent (§12.5).
+    no-op targets are skipped without being sent (§12.5). They also stop at the first line
+    the log refuses: C9 was checked once, before the first POST, and a refused line is proof
+    that no later write could be recorded either.
     """
     audit.check_writable(attempt.posture)
     sending = [plan for plan in plans if not plan.noop]
     token = _write_token(attempt, session) if sending else None
-    results, stopped, raised = [], False, []
+    results, stopped, raised, unlogged = [], None, [], None
     for plan in plans:
         if stopped:
-            result = _skipped(plan, "not-attempted", "not attempted: an earlier target did not "
-                                                     "end OK")
+            result = _skipped(plan, "not-attempted", f"not attempted: {stopped}")
         elif plan.noop:
             result = _skipped(plan, "noop", "already as requested; nothing was sent")
         else:
             result = _explained(send(session, plan, token), attempt.write)
-            stopped = result.exit != errors.OK
+            if result.exit != errors.OK:
+                stopped = "an earlier target did not end OK"
         results.append(result)
-        raised += _record_result(attempt, result, bool(sending))
+        failed_line = _record_result(attempt, result, bool(sending))
+        raised += failed_line
+        if failed_line and not stopped:
+            # A26 (5) lets this write keep its exit; it does not let another one go out.
+            stopped = "the audit log stopped taking lines, so no further write was sent (C9)"
+            unlogged = result
     # The write token is dropped as soon as the last POST is made; it is never written down.
     token = None
+    skipped = [r for r in results if r.outcome == "not-attempted"]
+    if unlogged is not None and skipped:
+        names = ", ".join(r.plan.target.node_id for r in skipped)
+        raised.append(output.warn(
+            "AUDIT_UNWRITABLE",
+            f"the audit log refused {unlogged.plan.target.label()}'s line, so {len(skipped)} "
+            f"later target(s) were not sent: {names}; fix the log as the warning above says, "
+            "then run the dry run for them again"))
     return _applied(attempt, plans, results, raised)
 
 
@@ -581,9 +596,13 @@ def _applied(attempt, plans, results, raised):
         return _envelope(attempt, [], warnings=raised, outcome="noop", results=results,
                          headline="NOOP: already as requested; nothing was sent")
     sent = sum(result.sent for result in results)
+    # Only a log that stopped taking lines leaves targets unsent behind writes that all ended
+    # OK; the headline says so, since exit 0 alone would read as the whole batch.
+    skipped = sum(result.outcome == "not-attempted" for result in results)
+    unsent = f"; {skipped} not attempted" if skipped else ""
     return _envelope(attempt, [], warnings=raised, outcome="applied", results=results,
                      headline=f"APPLIED: {sent} of {len(results)} sent, each confirmed by a "
-                              "re-read", steps=_after_tagging(results))
+                              f"re-read{unsent}", steps=_after_tagging(results))
 
 
 def _after_tagging(results):

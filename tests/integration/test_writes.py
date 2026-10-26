@@ -465,6 +465,42 @@ def test_an_unwritable_audit_log_stops_the_write(cli, net, armed):
     assert log.read_text() == ""
 
 
+def test_a_batch_sends_no_further_write_once_the_audit_log_stops_taking_lines(cli, net, armed):
+    # The log turns group-readable just after spec5's write lands, before its line is written,
+    # so from then on no line can be recorded and no later write may be sent (C9, invariant 6).
+    log = armed.state_dir / "audit.jsonl"
+    landed = net._write(IDS["spec5"], "key")
+
+    def land_then_break_the_log(request):
+        reply = landed(request)
+        log.chmod(0o644)
+        return reply
+
+    net.loopback.route("POST", f"{API}/device/{IDS['spec5']}/key", land_then_break_the_log)
+    result = disable(cli, "spec5", "nomad-b", "pi5", apply=True)
+    env = envelope(result)
+    assert [r.path for r in net.writes()] == [f"{API}/device/nSpec5x1CNTRL/key"]
+    assert [(r["outcome"], r["sent"]) for r in env["data"]["results"]] == [
+        ("applied", True), ("not-attempted", False), ("not-attempted", False)]
+    assert all("audit log" in r["message"] for r in env["data"]["results"][1:])
+    # The write that went out keeps its own exit (A26 (5)); the stop is said, not hidden.
+    assert (result.returncode, env["outcome"]) == (0, "applied"), result.stderr
+    assert "AUDIT_UNWRITABLE" in [w["code"] for w in env["warnings"]]
+    assert "nNomadB1CNTRL" in result.stderr and "nPi5x001CNTRL" in result.stderr
+    assert net.device("nomad-b")["keyExpiryDisabled"] is False
+    assert net.device("pi5")["keyExpiryDisabled"] is False
+    # Exit 0 alone would read as the whole batch, so the human verdict names what was left.
+    log.chmod(0o600)
+    net.device("spec5")["keyExpiryDisabled"] = False
+    human = cli("device", "disable-key-expiry", "spec5", "nomad-b", "pi5", "--apply", "--reason",
+                REASON)
+    assert human.stdout.startswith("APPLIED: 1 of 3 sent, each confirmed by a re-read; "
+                                   "2 not attempted"), human.stdout
+    assert len(net.writes()) == 2
+    log.chmod(0o600)
+    assert writes_logged(armed) == []
+
+
 def test_every_attempt_leaves_one_audit_line_with_the_decided_outcome(cli, net, armed):
     net.outcome("nomad-b", 403, lands=False)
     attempts = [

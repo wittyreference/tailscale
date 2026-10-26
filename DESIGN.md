@@ -967,6 +967,17 @@ ahead, or planted in the log, held off every re-measure that long. An answer dat
 measures again, and a reused answer's age is never below zero; because a future time leaves the
 answer's age as unknown as an unreadable one, and verification-discipline's 30-day bound must hold.
 
+**A58. (review, 2026-10-26) finding 13:** A26 (5) made a line that fails after a POST a warning so
+the write keeps its exit, §12.5 stopped a batch only at a target that did not end OK, and C9 was
+checked once, before the first POST; so when the log stopped taking lines mid-batch (a full disk, a
+mode or owner change), `disable-key-expiry` went on sending every later target, none of them
+recorded, and exited 0. A refused line now stops the batch as a failed target does: later targets
+are `not-attempted`, their message naming the log, an `AUDIT_UNWRITABLE` warning lists them, and the
+human verdict adds "N not attempted"; the write already sent keeps its exit, so a batch whose sent
+writes all ended OK still exits 0; because C9 says a write that cannot be recorded is not sent, a
+refused line proves exactly that of every later write, and A26 (5) covers the write already out,
+not the next one, while §5.3's exit 3 promises that nothing was sent.
+
 ---
 
 ## 0. The design on one page
