@@ -190,6 +190,20 @@ than fatal, the log line adds `removed`, and a file that cannot be removed raise
 disarm that did not happen would be worse than failing. `.gitignore`'s `credentials.*` backstop
 gains an exception for `src/tailnet/credentials.py`, which it would otherwise hide from git.
 
+**A14. (build, 2026-10-26)** §6 gives `Transport(posture).request(…, idempotent)`, §10.2 gives a
+write column of exits 6 and 7, a 403 message naming the scope "from a small table in `api.py`",
+and a validate 400 that is a verdict rather than an error; it was built as `Transport(posture, *,
+sleep, timeout)` with two more keywords on `request`: `needs_scope`, which `api.py` fills from its
+table, and `expect`, the statuses a caller takes as an answer. A write (`idempotent=False`) gets
+every status back as a `Response` for `writes` to judge after its re-read, and `http.NoResponse`
+(exit 4, `NETWORK` or `API_BAD_RESPONSE`) carries `sent`, false only when urllib failed while
+connecting or sending. A 401 on a read whose token cannot be renewed is `TOKEN_REJECTED` at once;
+because §6 orders `http` before `api`, so it cannot read api's table; §10.2's write outcomes
+depend on the post-read that only `writes` performs; a failure inside urllib's send step means
+the API never received a whole request, while one after it may have landed, as may a write whose
+reply was too large to read; and a freshly minted token that is refused is §5.3's "token
+rejected after re-minting" with nothing left to re-mint.
+
 ---
 
 ## 0. The design on one page
