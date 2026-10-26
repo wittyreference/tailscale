@@ -86,10 +86,15 @@ class Facts:
 
 @dataclass(frozen=True)
 class Verdict:
-    """One destination's verdict code (§15.2 step 7) and what it means, in words."""
+    """One destination's verdict code (§15.2 step 7) and what it means, in words.
+
+    `on_host` hands MC the on-host block for a verdict outside HOST_SIDE whose cause may sit
+    on the destination all the same: a reset beside a named drop (A53).
+    """
 
     code: str
     explanation: str
+    on_host: bool = False
 
     @property
     def reachable(self):
@@ -176,6 +181,30 @@ def _ts_ssh_timeout(facts):
             "last minute, re-run once first (propagation timing is unverified)")
 
 
+def _contradiction(facts):
+    """INCONCLUSIVE for a probe that got through although the network test names a drop (A53).
+
+    A Tailscale policy drop answers the SYN with a TSMP reject and no RST [wrap.go:1234-1252],
+    so a reset or an open port proves the SYN passed the filter, while the test runs as an
+    identity (invariant 11) and so cannot see a rule that matches this host otherwise. A
+    reset gets the on-host block: sshd may simply be down. It is not REFUSED_BY_HOST, because
+    this host's own firewall rejecting the connection also reads as a reset.
+    """
+    unseen = ("the identity test does not represent this host's traffic (a rule whose src is "
+              "its address, a host alias, a CIDR or a srcPosture condition), or the policy "
+              "changed in between")
+    if facts.tcp == "refused":
+        return Verdict("INCONCLUSIVE",
+                       "the probe got a reset, which a Tailscale policy drop never produces (a "
+                       "dropped SYN gets a TSMP reject and no RST), yet the network test names a "
+                       f"drop: {unseen}, or this host's own firewall rejected the connection; if "
+                       f"the SYN did get through, nothing listens on port {facts.port} at its "
+                       "Tailscale address (for :22, sshd)", on_host=True)
+    return Verdict("INCONCLUSIVE",
+                   f"port {facts.port} accepted a TCP connection, which a Tailscale policy drop "
+                   f"never allows, yet the network test names a drop: {unseen}")
+
+
 def verdict(facts):
     """The verdict for one destination: the first row of §15.2 step 7 whose condition holds.
 
@@ -244,6 +273,8 @@ def verdict(facts):
     if layer and allowed and not user and not probe_decides:
         return Verdict("TS_SSH_UNVERIFIED", "the network allows it, and on :22 Tailscale SSH "
                                             "decides admission by user: re-run with --ssh-user")
+    if self_mode and allowed is False and tcp in ("refused", "open"):
+        return _contradiction(facts)
     if allowed is False:
         # Said only when the ssh section did not already admit the source: then both layers
         # need a rule, and fixing the grant alone would end in a TS_SSH verdict.
@@ -698,7 +729,7 @@ class _Ladder:
         entry.update(verdict=found.code, explanation=found.explanation,
                      next=next_steps(found.code, dest, port=self.port, user=self.user,
                                      source=self.source, ids=self.identities,
-                                     inventory=self.inventory),
+                                     inventory=self.inventory, on_host=found.on_host),
                      measured_at=output.now_utc())
         return entry
 
@@ -860,12 +891,13 @@ class _Ladder:
         return False if found.reason == "errors" else None
 
 
-def next_steps(code, dest, *, port, user, source, ids, inventory):
+def next_steps(code, dest, *, port, user, source, ids, inventory, on_host=False):
     """What happens next for one verdict, naming who acts (§15.2 step 7's last column).
 
     Pure: `dest` is the destination Device (None when it did not resolve), `source` the
     Source, `ids` its identities and `inventory` every device, from which the on-host steps
-    pick MC's user-owned devices to ask about with --from.
+    pick MC's user-owned devices to ask about with --from. `on_host` is the verdict's own
+    flag for a cause that may sit on the destination outside HOST_SIDE (A53).
     """
     if code == "SOURCE_DOWN":
         return [_agent("tailscale status", "this host is not on the tailnet now; its local "
@@ -922,7 +954,7 @@ def next_steps(code, dest, *, port, user, source, ids, inventory):
         return [_agent(f"tailnet policy draft --name allow-tcp-{port}",
                        f"add a grant from {sources} to {name} on tcp:{port}, then validate and "
                        "diff; MC applies it in the console; re-run this")]
-    if code in HOST_SIDE:
+    if code in HOST_SIDE or on_host:
         return _on_host(dest, name, port=port, user=user, source=source, inventory=inventory,
                         ts_ssh=code == "TS_SSH_TIMEOUT_UNEXPLAINED")
     return []

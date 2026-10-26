@@ -374,6 +374,29 @@ def test_the_on_host_block_is_emitted_for_host_side_verdicts(cli, diag, configur
                      human.stdout, re.MULTILINE)
 
 
+def test_a_reset_beside_a_named_drop_is_inconclusive_with_the_on_host_block(cli, diag,
+                                                                           configured):
+    # The identity test can disagree with real traffic (a rule naming this host's address, a
+    # host alias, a CIDR or a posture condition), and a reset proves the SYN passed the
+    # filter, so the probe's answer is not overruled by the test's (A53).
+    write_protected(configured)
+    diag.device("pi5")["sshEnabled"] = False
+    diag.address("pi5", PI5_LOOPBACK)
+    with closed_port(PI5_LOOPBACK) as port:
+        diag.network["tag:dev"] = drop("tag:dev", f"{PI5_LOOPBACK}:{port}")
+        result = cli("--json", "diagnose", "pi5", "--port", str(port))
+    env = envelope(result)
+    assert (result.returncode, env["error"]["code"]) == (8, "DIAGNOSE_BLOCKED")
+    [dest] = env["data"]["destinations"]
+    assert (dest["probes"]["tcp"]["result"], dest["verdict"]) == ("refused", "INCONCLUSIVE")
+    assert dest["network_test"][0]["allowed"] is False
+    assert "reset" in dest["explanation"]
+    # No grant is drafted for traffic the probe shows getting through; sshd may be down.
+    assert not [s for s in dest["next"] if s.get("run", "").startswith("tailnet policy draft")]
+    [block] = [step for step in dest["next"] if step["who"] == "mc"]
+    assert block["do"].startswith("# On pi5, while the agent retries from claude-factory:")
+
+
 def test_an_unknown_source_or_the_source_itself_stops_at_step_one(cli, diag, configured):
     # No protected file: test posture has no self line, so this host's device is unknown.
     result = cli("--json", "diagnose", "spec5", "pi5")

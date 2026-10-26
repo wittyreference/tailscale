@@ -915,6 +915,19 @@ at work; because the netmap holds only devices the policy lets this host reach o
 the tailnet; mc §5's stale peer list justifies the Running and online checks, not refusing an empty
 list.
 
+**A53. (review, 2026-10-26) finding 16:** §15.2 step 7 put `POLICY_DROP` before `REFUSED_BY_HOST`
+and never read the probe for it, so in self mode a reset (TCP `refused`), or an open port that did
+not resolve to `OPEN` or `ADMITTED_CHECK_MODE`, beside a named drop was reported as "the policy drops
+it … so it looks like a timeout", contradicting what the probe saw, and the next step drafted a
+grant MC does not need. It was changed so that in self mode such a probe beside a named drop is
+`INCONCLUSIVE`, its explanation naming the contradiction; a reset also hands MC the on-host block
+(a `Verdict.on_host` flag that `next_steps` honours), since sshd may simply be down; a timeout
+and `--from` mode keep `POLICY_DROP`. It is not `REFUSED_BY_HOST`, because this host's own firewall
+rejecting the connection also reads as a reset while the policy may really drop it. Because a
+policy drop gets a TSMP reject and no RST [wrap.go:1234-1252] and never lets a connection open, and
+the test runs as an identity (invariant 11) while a rule may match this host by its address, a host
+alias, a CIDR or a `srcPosture` condition [policy-file L65-81, keyed in `references/diagnose-port.md`].
+
 ---
 
 ## 0. The design on one page

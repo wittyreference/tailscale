@@ -119,17 +119,18 @@ calls made. Human output gives one verdict line per host, then the evidence, eac
 | `TS_SSH_CHECK_FOR_TAGGED` | Tagged source; only a `check` rule matches; and TCP `open` in self mode, or `--from` mode, or the network dropped (DESIGN A50) | It can never work: "An SSH access rule from a tagged device cannot be in check mode" [SSH L218] | — | An `accept` rule `tag:dev` → `tag:fleet` needs MC's answer to MC6 |
 | `TS_SSH_POLICY` | Tailscale SSH on; network allowed; `ssh` denies both ways; TCP `open` in self mode, or `--from` mode (DESIGN A50) | The `ssh` section has no rule from S to this host for that user | — | `policy-workflow.md`, the `ssh` rule shape |
 | `TS_SSH_UNVERIFIED` | Tailscale SSH on; network allowed; no `--ssh-user`; TCP `open` in self mode, or `--from` mode (DESIGN A50) | Nothing about SSH admission yet | — | Rerun with `--ssh-user` |
-| `POLICY_DROP` | `network_allowed == false` | The live policy drops it. That matches a timeout: a dropped SYN gets a TSMP reject and no RST (`wrap.go:1234-1252` [source-code]). A failed TSMP ping beside it is the same policy when it lets neither device reach the other, which trims each from the other's netmap [visibility L77-80] | — | `tailnet policy draft` with the recipe grant; MC applies; rerun. A Tailscale SSH host also needs an `ssh` rule |
+| `POLICY_DROP` | `network_allowed == false`; in self mode, the probe neither reset nor connected (DESIGN A53) | The live policy drops it. That matches a timeout: a dropped SYN gets a TSMP reject and no RST (`wrap.go:1234-1252` [source-code]). A failed TSMP ping beside it is the same policy when it lets neither device reach the other, which trims each from the other's netmap [visibility L77-80] | — | `tailnet policy draft` with the recipe grant; MC applies; rerun. A Tailscale SSH host also needs an `ssh` rule |
 | `ALLOWED` | `--from` mode; network allowed; Tailscale SSH off or admitted with `accept` | The policy permits it | That the host answers: no probe runs from here | — |
 | `REFUSED_BY_HOST` | Self mode; TCP `refused`; network allowed | The SYN passed Tailscale's filter and the host reset it: nothing listening on that address | — | On-host block |
 | `HOST_SIDE_DROP` | Self mode; TCP `timeout`; network allowed; Tailscale SSH off | The policy allows it; the host firewall or sshd's bind is the suspect | — | On-host block. If the policy changed within the last minute, rerun once first (propagation timing [unverified]) |
 | `TS_SSH_TIMEOUT_UNEXPLAINED` | Self mode; TCP `timeout`; network allowed; Tailscale SSH on, whatever its `ssh` section said (DESIGN A50) | Not the `ssh` section: tailscaled completes the handshake on port 22 and asks the `ssh` section only at login [SSH L61, L118], so it cannot cause a timeout. The SYN was dropped before tailscaled took it, or Tailscale SSH is not running there | Which of those; while Tailscale SSH runs, a host firewall is probably not in the path [inference] | On-host block. The `ssh` section's answer is in the explanation as a second blocker: a denial, or check mode for a tagged source (MC6), still needs fixing once the port opens |
-| `INCONCLUSIVE` | Anything else: probe or API errors, `sshEnabled` unknown on port 22 with the network allowed (DESIGN A31), or a destination this host's netmap does not list with no drop named (DESIGN A52) | — | — | Every fact is reported and both Tailscale SSH hypotheses listed; a peer's `sshHostKeys` is a weak hint only [unverified] |
+| `INCONCLUSIVE` | Anything else: probe or API errors, `sshEnabled` unknown on port 22 with the network allowed (DESIGN A31), a destination this host's netmap does not list with no drop named (DESIGN A52), or in self mode a reset or an open port beside a named drop (DESIGN A53) | — | — | Every fact is reported and both Tailscale SSH hypotheses listed; a peer's `sshHostKeys` is a weak hint only [unverified]. A probe that got through beside a named drop means the identity test does not represent this host's traffic (an address, host alias, CIDR or posture rule), the policy changed, or for a reset this host's own firewall; a reset also gets the on-host block |
 
 ## 5. The on-host block
 
 The CLI prints this for the three host-side verdicts (`REFUSED_BY_HOST`, `HOST_SIDE_DROP`,
-`TS_SSH_TIMEOUT_UNEXPLAINED`) as `next: who=mc needs=terminal`, filled in with the destination,
+`TS_SSH_TIMEOUT_UNEXPLAINED`), and for an `INCONCLUSIVE` reset beside a named drop (DESIGN A53),
+as `next: who=mc needs=terminal`, filled in with the destination,
 this host's name and address, and the port (DESIGN A32); the template below shows port 22. It runs
 **on the destination**, from a session that can reach it: MC's phone through Termius, or albini →
 pi5 → spec5 over the bench wire (fleet.yaml:86). Hand MC the block in one paste, and say what it
@@ -259,7 +260,7 @@ Each is reported as unknown when it matters, never filled in.
 
 Read or fetched 2026-10-26.
 
-- `DESIGN`: `DESIGN.md` §5.2, §5.3, §15, §24, §26 and Amendments A31, A32 and A50-A52 in this repo.
+- `DESIGN`: `DESIGN.md` §5.2, §5.3, §15, §24, §26 and Amendments A31, A32 and A50-A53 in this repo.
 - `mc`, `critic`, `api`, `policy-access`: `docs/research/mc-tailnet.md`, `critic.md`,
   `api-surface.md`, `policy-access.md` (all 2026-10-26).
 - `fleet.yaml`: `/home/user/tailnet-ssh/fleet/fleet.yaml` at `2cab922` (2026-10-10).

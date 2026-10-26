@@ -191,6 +191,28 @@ def test_a_validate_drop_is_a_policy_drop():
     assert found.code == "POLICY_DROP" and "ssh section" not in found.explanation
 
 
+def test_a_reset_or_an_open_port_beside_a_named_drop_is_a_contradiction_not_a_drop():
+    # A Tailscale policy drop never produces an RST and never lets a connection open (TSMP
+    # reject, no RST [wrap.go:1234-1252]), so a probe that got either proves the SYN passed
+    # the filter: the identity test does not represent this host's traffic (A53).
+    refused = diagnose.verdict(replace(OPEN_ROAD, tcp="refused", network_allowed=False,
+                                       ssh_enabled=False))
+    assert refused.code == "INCONCLUSIVE"
+    assert "reset" in refused.explanation and "srcPosture" in refused.explanation
+    # sshd may simply be down, so MC still gets the on-host block.
+    assert refused.on_host is True
+    for ssh_enabled in (True, None):
+        opened = diagnose.verdict(replace(OPEN_ROAD, tcp="open", network_allowed=False,
+                                          ssh_enabled=ssh_enabled, ssh_user="spec5",
+                                          ssh_admitted="denied"))
+        assert opened.code == "INCONCLUSIVE", ssh_enabled
+        assert "accepted a TCP connection" in opened.explanation and not opened.on_host
+    # A timeout is what a drop looks like, and --from mode has no probe to contradict it.
+    assert code(OPEN_ROAD, tcp="timeout", network_allowed=False, ssh_enabled=False) == (
+        "POLICY_DROP")
+    assert code(FROM, network_allowed=False, ssh_enabled=False) == "POLICY_DROP"
+
+
 def test_from_mode_with_policy_allow_is_allowed():
     assert code(FROM, network_allowed=True, ssh_enabled=False) == "ALLOWED"
     assert code(FROM, network_allowed=True, ssh_enabled=True, ssh_user="spec5",
