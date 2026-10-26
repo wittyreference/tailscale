@@ -4,10 +4,11 @@ __pycache__/
 .pytest_cache/
 .ruff_cache/
 # The credential never lives in a checkout. These patterns are a backstop for a misplaced
-# copy, not the place it is meant to be kept.
+# copy, not the place it is meant to be kept. They name the files the CLI writes under
+# ~/.config/tailnet (DESIGN.md §8.1), not the word "credentials": that pattern hid the
+# credentials module and the credentials research and reference docs from git.
 *.secret
-credentials
-credentials.*
-# The module that loads them is code, not a credential.
-!src/tailnet/credentials.py
+read.json
+write.json
+read-token.json
 .env
