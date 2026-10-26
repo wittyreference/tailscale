@@ -623,6 +623,28 @@ session and re-arms it with the same client, so an unconditional "revoke" would 
 destroying a client they mean to keep, while a token removed from disk is still a live token
 until its hour runs out.
 
+**A36. (build, 2026-10-26)** §20.4 step 1 aborted the settings step on invalid JSON, a non-object
+`permissions` or a non-list `ask`/`deny`; steps 4 and 7 named a backup and a removal without
+saying the backup's mode, what a second backup in the same second is called, or which copy of a
+doubled rule comes out; step 6 warned of "an existing `deny` rule matching `tailnet`"; and §20.6
+printed the change as a unified diff of the pretty-printed JSON. It was built (1) aborting, with
+nothing written and the rules printed for MC to add by hand, also for a top level that is not an
+object, `"permissions": null`, a settings file that is a symlink or not a regular file, one over
+1 MiB (`gate.SETTINGS_MAX`) and one that is not UTF-8; (2) with the backup written first, 0600
+whatever the original's mode, and a name already taken followed by `-1`, `-2`; a missing settings
+directory is created 0700; (3) with `remove` taking out one copy of each recorded string, the
+last, and reporting recorded strings no longer present as `not_found`; (4) warning of a deny rule
+that names `tailnet` only when it is not one of `gate.rules_for`'s own deny strings; (5) with the
+diff carrying no context lines; and (6) with `pyproject.toml`'s `pythonpath` gaining
+`installer/`; because replacing a symlink cuts MC's link (into a dotfiles checkout, say) and leaves
+a plain file behind, a file larger than status and doctor read could never count as holding the
+rules, and an empty or BOM-led file is as much a guess as a broken one; settings can carry
+environment values, and an earlier backup must never be overwritten; ours was appended, so a copy
+MC added by hand survives; our own four deny rules name tailnet's directories and would warn on
+every run; context lines would carry whatever sits beside the permissions, environment values
+included, into the agent's transcript; and the installer's modules are imported by name, as
+`install.py` puts its own directory on its path when the wrapper runs it isolated (`-I`).
+
 ---
 
 ## 0. The design on one page

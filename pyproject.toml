@@ -5,9 +5,10 @@
 # The default run is unit + integration + the hook tests. e2e is excluded by path, not
 # hidden by a marker, so `pytest tests/e2e` always runs it (DESIGN.md §21.1).
 testpaths = ["tests/unit", "tests/integration", "tests/test_pre_commit.py"]
-# src layout without an install: the package comes from src/, and the shared test
-# helpers (netguard, loopback) from tests/.
-pythonpath = ["src", "tests"]
+# src layout without an install: the package comes from src/, the shared test helpers
+# (netguard, loopback) from tests/, and the installer's modules from installer/, the
+# directory install.py puts on its own path when the wrapper runs it isolated (-I).
+pythonpath = ["src", "tests", "installer"]
 # Pristine means pristine: any warning fails the run, and a mistyped marker or setting
 # is an error rather than a silent no-op.
 filterwarnings = ["error"]
