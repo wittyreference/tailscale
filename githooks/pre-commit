@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# ABOUTME: Pre-commit guard that refuses a commit made under no identity or a Twilio work identity.
+# ABOUTME: Pre-commit guard: refuses no identity or a Twilio work identity, and any staged Tailscale key.
 # ABOUTME: Fails closed, like the write guard in the CLI: a missing answer blocks, it never passes.
 
 set -euo pipefail
@@ -23,5 +23,54 @@ if [[ "$email" == *"@$FORBIDDEN_DOMAIN" || "$email" == *".$FORBIDDEN_DOMAIN" ]];
     echo "tailscale: refusing to commit as <$email>." >&2
     echo "           $FORBIDDEN_DOMAIN is a work identity; this repo is personal." >&2
     echo "           git config user.email '$SUGGESTED'" >&2
+    exit 1
+fi
+
+# A Tailscale key in history is a key published: removing it takes a history rewrite,
+# and only revoking it in the console makes it safe again. So scan what this commit
+# adds (DESIGN.md §21.6), for every documented key kind [KP L11-17; cred §14].
+#
+# Only added lines count, by their line number in the staged file. A key-shaped token
+# whose key part is nothing but runs of lowercase x joined by hyphens is a documentation
+# placeholder and passes: the pinned OpenAPI spec carries four and must stay byte-identical
+# (amendment A5). A real key ID never looks like that.
+#
+# The match is never printed, only file:line, because this output lands in transcripts.
+# The diff flags pin the format against local config: no colour, no external or
+# textconv drivers, binary files scanned as text, and fixed a/ b/ prefixes.
+scan='
+/^diff / { in_header = 1; next }
+in_header && /^\+\+\+ / { file = substr($0, 5); sub(/^b\//, "", file); next }
+/^@@ / {
+    in_header = 0
+    split($3, start, ",")
+    line = substr(start[1], 2) - 1
+    next
+}
+!in_header && /^\+/ {
+    line++
+    text = substr($0, 2)
+    while (match(text, /tskey-(client|api|auth|scim|webhook)-[A-Za-z0-9][A-Za-z0-9_-]*/)) {
+        token = substr(text, RSTART, RLENGTH)
+        text = substr(text, RSTART + RLENGTH)
+        sub(/^tskey-[a-z]+-/, "", token)
+        if (token !~ /^x+(-x+)*$/) { print file ":" line; break }
+    }
+}
+'
+
+if ! findings="$(git diff --cached -U0 --no-color --no-ext-diff --no-textconv --text \
+        --src-prefix=a/ --dst-prefix=b/ | awk "$scan")"; then
+    echo "tailscale: refusing to commit: could not read the staged diff to scan it for secrets." >&2
+    exit 1
+fi
+
+if [ -n "$findings" ]; then
+    echo "tailscale: refusing to commit: a Tailscale key is staged at:" >&2
+    while IFS= read -r where; do
+        echo "           $where" >&2
+    done <<< "$findings"
+    echo "           Unstage it. If it was ever real, revoke it in the console." >&2
+    echo "           Test secrets are assembled at runtime, never written as literals." >&2
     exit 1
 fi

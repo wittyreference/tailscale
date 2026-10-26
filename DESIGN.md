@@ -92,6 +92,14 @@ was built with a `[tool.ruff]` table as well (`target-version = "py310"`), and s
 backend; because lint has to hold code to the 3.10 floor (critic Q26), and a linter tuned to the
 newest Python would pass 3.11-only syntax that the droplet may not run.
 
+**A5. (build, 2026-10-26)** §21.6 said the pre-commit hook refuses any staged line matching
+`tskey-(client|api|auth|scim|webhook)-[A-Za-z0-9]`; it was built to let through a match whose key
+part is nothing but runs of lowercase `x` joined by hyphens, and to refuse every other match in
+every file; because the spec that §29 item 4 pins byte-for-byte carries four such documentation
+placeholders (spec 25, 28, 5784, 6626), so the hook as written would block the pin. A content
+rule keeps that file scanned, where a path exemption would wave a real key pasted into it
+through, and a real key cannot be all `x`: its key ID is `k123456CNTRL`-shaped [spec 5780, 6623].
+
 ---
 
 ## 0. The design on one page
