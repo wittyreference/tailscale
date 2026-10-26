@@ -136,6 +136,16 @@ honours environment proxies by design (§7.1), so without this an in-process tes
 production posture would go out through the proxy unseen. Integration CLI processes run with a
 minimal environment (§21.1) and are unaffected.
 
+**A10. (build, 2026-10-26)** §7.2 said `TAILNET_API_BASE` is parsed with `urllib.parse` and
+`TAILNET_HOME`'s paths are `$TAILNET_HOME/config` and `/state`; it was built to check the raw text
+as well, which must be exactly `http://127.0.0.1:PORT` or `http://localhost:PORT` (lowercase, port
+1-65535, at most a bare trailing `/`), to count a variable that is present but empty as set, and
+to build every test path from the `realpath` of `TAILNET_HOME` that rule 3 checked; because
+`urllib.parse` strips tabs, newlines and leading spaces and lowercases scheme and host, so a value
+can parse clean when the text is not what the rule names, port 0 cannot be connected to, an
+exported-but-empty override silently becoming production is the fallback rule 4 forbids, and a
+symlink re-pointed after the check must not steer test reads into the real directories.
+
 ---
 
 ## 0. The design on one page
