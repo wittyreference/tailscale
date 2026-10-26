@@ -110,6 +110,15 @@ path to a directory; because each of these leaves the box, or runs the binary, w
 either event the spec named. The loopback seam skips `HTTPServer`'s reverse lookup of its own
 address for the same reason.
 
+**A7. (build, 2026-10-26)** §10.4 said registered values are matched exactly, the JSON field
+pattern is `"(access_token|client_secret)"\s*:\s*"[^"]*"`, and the excepthook is `sys.excepthook`;
+it was built to register each value's JSON-escaped and URL-encoded spellings as well, to let the
+JSON field pattern step over escaped quotes (`"(?:[^"\\]|\\.)*"`), and to install a redacting
+`threading.excepthook` beside `sys.excepthook`; because redaction runs on serialised text, where a
+value with a quote, backslash or non-ASCII character no longer appears as itself, `[^"]*` stops
+at an escaped quote and leaves the rest of the secret showing, and a crash on another thread is
+printed by its own hook, unredacted, which invariant 2 forbids.
+
 ---
 
 ## 0. The design on one page
