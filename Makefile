@@ -1,11 +1,11 @@
-# ABOUTME: Entry points for tailnet: make venv, test and e2e for development, and make install and
-# ABOUTME: install-dry-run, which run install-tailnet.sh for the user who runs make (DESIGN.md §20).
+# ABOUTME: Entry points for tailnet: make venv, test and e2e for development; make install, install-dry-run
+# ABOUTME: and uninstall run install-tailnet.sh for the user who runs make (DESIGN.md §20).
 
 PYTHON ?= python3
 VENV := .venv
 PY := $(VENV)/bin/python
 
-.PHONY: venv test e2e install install-dry-run
+.PHONY: venv test e2e install install-dry-run uninstall
 
 # pytest and ruff are development-only; the CLI itself imports nothing outside the
 # stdlib (DESIGN.md §3.1). Pinned so the 3.10 floor and the droplet run the same tools.
@@ -33,3 +33,8 @@ install:
 
 install-dry-run:
 	./install-tailnet.sh --dry-run
+
+# Removes what install.json says was added. Credentials, the token cache, the protected file,
+# the audit log and drafts stay, and removing files revokes nothing (§20.6).
+uninstall:
+	./install-tailnet.sh --uninstall

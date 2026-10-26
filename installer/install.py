@@ -1,5 +1,5 @@
 # ABOUTME: Installs tailnet for MC: the CLI and its launcher, the pinned spec, both skills, the docs MCP
-# ABOUTME: server and the settings rules (DESIGN.md §20). Every change goes through act(); a dry run makes none.
+# ABOUTME: server and the settings rules (§20); --uninstall reverses it. Every change goes through act().
 
 import argparse
 import hashlib
@@ -170,6 +170,7 @@ class Options:
     """
 
     dry_run: bool = False
+    uninstall: bool = False
     upstream: bool = True
     mcp: bool = True
     upstream_url: str = UPSTREAM_URL
@@ -232,6 +233,14 @@ def remove_path(path):
         shutil.rmtree(path)
     else:
         os.unlink(path)
+
+
+def remove_empty_dir(path):
+    """Remove a directory the installer made, only if nothing is left in it."""
+    try:
+        os.rmdir(path)
+    except OSError:
+        pass
 
 
 def write_file(path, data, mode):
@@ -446,10 +455,18 @@ class Installer:
         self.say(f"{self.step}: STOPPED: {why}")
 
     def run(self):
-        """Run every step in order; return 0, or 1 when any step stopped."""
+        """Install, or with --uninstall reverse the record; return 0, or 1 when a step stopped."""
         self.previous, self.previous_problem = read_small_json(self.target.record)
+        if self.options.uninstall:
+            return self.run_uninstall()
         self.commit, self.dirty = self.source_state()
-        for name, step in self.steps():
+        self.run_steps(self.steps())
+        self.finish()
+        return 1 if self.stopped else 0
+
+    def run_steps(self, steps):
+        """Run each step in order; one that cannot go on is STOPPED and the rest still run."""
+        for name, step in steps:
             self.step, self.reported = name, False
             try:
                 step()
@@ -458,8 +475,6 @@ class Installer:
                 self.stop(_reason(exc))
             if not self.reported:
                 self.same()
-        self.finish()
-        return 1 if self.stopped else 0
 
     def steps(self):
         """The install, in order: local files first, then the skills, the rules, the record."""
@@ -777,6 +792,173 @@ class Installer:
             write()
             self.same("last_run updated")
 
+    # Uninstall (§20.6): reverse install.json; never touch credentials, the log or drafts
+
+    def recorded(self, name):
+        """Whether the install record says the installer added this artifact."""
+        added = self.previous.get("added") if isinstance(self.previous, dict) else None
+        return isinstance(added, dict) and added.get(name) is True
+
+    def run_uninstall(self):
+        """Remove what the record and the markers say is the installer's, code before rules."""
+        record = self.target.record
+        if self.previous is None:
+            self.step = "record"
+            if self.previous_problem:
+                self.stop(f"{record} is unreadable ({self.previous_problem}); nothing was "
+                          "removed, since it is the only list of what the installer added")
+            else:
+                self.say(f"no install record at {record}: nothing to reverse, so nothing was "
+                         "removed")
+                present = [str(p) for p in (self.target.launcher, self.target.lib,
+                                            self.target.spec, self.target.skill,
+                                            self.target.upstream_copy, self.target.clone)
+                           if os.path.lexists(p)]
+                if present:
+                    self.say("Still present; remove by hand any that are tailnet's: "
+                             + ", ".join(present))
+            self.finish_uninstall()
+            return 1 if self.stopped else 0
+        installed_for = self.previous.get("claude_dir")
+        if installed_for and installed_for != str(self.target.claude_dir):
+            self.say(f"warning: the install used the Claude directory {installed_for}, but this "
+                     f"run uses {self.target.claude_dir}; set CLAUDE_CONFIG_DIR as it was for "
+                     "the install to reverse its skills and rules")
+        # The rules come out after the code they guard, and the record goes last: while
+        # anything of the installer's remains, the record still lists it.
+        self.run_steps([("launcher", self.remove_launcher), ("lib", self.remove_lib),
+                        ("spec", self.remove_spec), ("skill", self.remove_skill),
+                        ("upstream", self.remove_upstream), ("mcp", self.remove_mcp),
+                        ("settings", self.remove_rules), ("record", self.remove_record)])
+        self.finish_uninstall()
+        return 1 if self.stopped else 0
+
+    def remove_launcher(self):
+        """The launcher, only while it is still the one this installer wrote."""
+        path = self.target.launcher
+        if not self.recorded("launcher") or not os.path.lexists(path):
+            return
+        try:
+            lines = secure_files.read_regular(path, SMALL).split(b"\n")
+        except secure_files.Unreadable:
+            lines = []
+        if len(lines) < 2 or lines[1] != LAUNCHER_ABOUT.encode():
+            self.tell(f"left alone: {path} is not a launcher this installer wrote")
+            return
+        self.act(f"remove the launcher {path}", lambda: os.unlink(path))
+
+    def remove_lib(self):
+        """The installed CLI package, and any copy an interrupted run left beside it."""
+        lib = self.target.lib
+        present = [p for p in (lib, lib.parent / f".{lib.name}.new", lib.parent / f".{lib.name}.old")
+                   if os.path.lexists(p)]
+        if self.recorded("lib") and present:
+            self.act(f"remove {lib}", lambda: ([remove_path(p) for p in present],
+                                               remove_empty_dir(lib.parent)))
+
+    def remove_spec(self):
+        """The installed copy of the pinned spec."""
+        spec = self.target.spec
+        present = [spec / name for name in SPEC_FILES if os.path.lexists(spec / name)]
+        if self.recorded("spec") and present:
+            self.act(f"remove the pinned spec from {spec}",
+                     lambda: ([remove_path(p) for p in present], remove_empty_dir(spec)))
+
+    def remove_skill(self):
+        """Our skill, only where its marker is ours."""
+        path = self.target.skill
+        owner, _ = whose(path, "commit")
+        if owner == "foreign":
+            self.tell(f"left alone: {path} has no tailnet marker "
+                      f"({upstream.describe(path, self.environ)})")
+        elif owner == "ours":
+            self.act(f"remove {path}", lambda: remove_path(path))
+
+    def remove_upstream(self):
+        """The upstream copy where its marker is ours, and the clone the record lists."""
+        if not self.options.upstream:
+            self.tell("skipped (--no-upstream)")
+            return
+        copy, clone = self.target.upstream_copy, self.target.clone
+        owner, _ = whose(copy, "pin")
+        if owner == "foreign":
+            self.tell(f"left alone: {copy} is not tailnet's copy "
+                      f"({upstream.describe(copy, self.environ)})")
+        elif owner == "ours":
+            self.act(f"remove {copy}", lambda: remove_path(copy))
+        if self.recorded("upstream_clone") and os.path.lexists(clone):
+            if not upstream.is_clone(clone):
+                self.tell(f"left alone: {clone} is not a git clone")
+                return
+            self.act(f"remove the clone {clone}",
+                     lambda: (remove_path(clone), remove_empty_dir(clone.parent)))
+
+    def remove_mcp(self):
+        """The docs MCP server, only if the installer added it and it still has tailnet's URL."""
+        if not self.recorded("mcp"):
+            return
+        if not self.options.mcp:
+            self.tell("skipped (--no-mcp); the docs server stays registered")
+            return
+        program = shutil.which("claude", path=self.environ.get("PATH", ""))
+        if program is None:
+            self.tell(f"not removed: claude is not on PATH; run: {' '.join(MCP_REMOVE)}")
+            return
+        code, out = self._claude(program, MCP_GET)
+        if code == 0 and DOCS_MCP_URL in out:
+            self.act(" ".join(MCP_REMOVE), lambda: self._claude(program, MCP_REMOVE, must=True))
+        elif code == 0:
+            self.tell(f"left alone: {DOCS_MCP} now has another URL than {DOCS_MCP_URL}")
+
+    def remove_rules(self):
+        """The settings rules the record lists, where each is still present as written."""
+        added = self.previous.get("added")
+        rules = added.get("rules") if isinstance(added, dict) else None
+        outcome = settings_merge.remove_file(self.target.settings,
+                                             rules if isinstance(rules, dict) else {},
+                                             now=self.now, dry_run=self.options.dry_run)
+        if outcome.status == "aborted":
+            raise StepError(outcome.message)
+        if outcome.status == "unchanged":
+            self.same(outcome.message)
+            return
+        self.changed = self.reported = True
+        self.say(("would: " if outcome.status == "would" else "done: ") + outcome.message)
+        for line in outcome.diff.splitlines():
+            self.say(line)
+
+    def remove_record(self):
+        """The record itself, last, and the share directories left empty; kept if a step stopped."""
+        if self.stopped:
+            self.tell(f"kept: {self.target.record}, because a step stopped; run --uninstall again "
+                      "once that is fixed and it will finish from the same record")
+            return
+        share = self.target.share
+
+        def remove():
+            """Unlink the record, then each share directory the removals left empty."""
+            os.unlink(self.target.record)
+            for directory in (share / "lib", share / "spec", share / "upstream", share):
+                remove_empty_dir(directory)
+
+        self.act(f"remove the install record {self.target.record}", remove)
+
+    def finish_uninstall(self):
+        """The closing lines: what uninstall never touches, and that removal is not revocation."""
+        self.say("")
+        if self.options.dry_run:
+            self.say("Dry run: nothing was removed.")
+        if self.stopped:
+            self.say(f"Stopped: {', '.join(self.stopped)}. Each STOPPED line above says why; "
+                     "the other steps ran.")
+        self.say("Left in place, never touched by uninstall:")
+        self.say(f"  {self.target.config} (credentials, the token cache, the protected file)")
+        self.say(f"  {self.target.state / 'audit.jsonl'} (the audit log)")
+        self.say(f"  {self.target.drafts} (policy drafts)")
+        self.say("Removing files is not revocation: in the Tailscale console, open Trust "
+                 "credentials and Revoke each client, the read client and any write client "
+                 "[TC L380-388].")
+
     def finish(self):
         """The closing lines: what a dry run did not do, what stopped, and MC's next steps."""
         self.say("")
@@ -814,13 +996,17 @@ def parse(argv, environ):
                     "docs MCP server and the Claude Code rules.")
     parser.add_argument("--dry-run", action="store_true",
                         help="say what would change, and change nothing")
+    parser.add_argument("--uninstall", action="store_true",
+                        help="remove what install.json says was added; never credentials, the "
+                             "audit log or drafts")
     parser.add_argument("--no-upstream", action="store_true",
                         help="skip Tailscale's upstream skill")
     parser.add_argument("--no-mcp", action="store_true",
                         help="skip the Tailscale docs MCP server")
     args = parser.parse_args(argv)
     dry = args.dry_run or environ.get("DRY_RUN", "") not in ("", "0")
-    return Options(dry_run=dry, upstream=not args.no_upstream, mcp=not args.no_mcp)
+    return Options(dry_run=dry, uninstall=args.uninstall, upstream=not args.no_upstream,
+                   mcp=not args.no_mcp)
 
 
 def main(argv=None):

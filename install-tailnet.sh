@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ABOUTME: Installs tailnet for the user who runs it: needs Python 3.10 or later and refuses root, then runs
-# ABOUTME: installer/install.py isolated (-I). Options: --dry-run (or DRY_RUN=1), --no-upstream, --no-mcp.
+# ABOUTME: install.py isolated (-I). Options: --dry-run (or DRY_RUN=1), --uninstall, --no-upstream, --no-mcp.
 
 set -euo pipefail
 

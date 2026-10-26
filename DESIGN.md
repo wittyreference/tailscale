@@ -702,6 +702,27 @@ brings only the remote HEAD, and a forced checkout would discard edits MC made; 
 not a documented interface; a dry run has no launcher to find; and a read changes nothing, which is
 all §20.6 forbids a dry run.
 
+**A39. (build, 2026-10-26)** §20.6 had `--uninstall` reverse `install.json` (launcher, lib and spec;
+both skills where the markers are ours, and the clone; the MCP entry if added and its URL still
+matches; each recorded rule still present) without saying where the paths come from, in what
+order, what happens when a step cannot finish or no record exists, or what `--no-upstream` and
+`--no-mcp` mean there. It was built (1) computing every path from the home and the Claude
+directory, with the record saying only whether each artifact was added; (2) removing the launcher
+only while its second line is still the installer's own ABOUTME line, and the clone only while it
+is a git clone; (3) removing the code first, the rules after it and the record last, and keeping
+the record when any step stopped, so a later run finishes from it; (4) with no record, removing
+nothing and listing the installer's paths still present, and with a record it cannot read,
+stopping with nothing removed; (5) warning when the record names another Claude directory than the
+run's; (6) honouring `--no-upstream` and `--no-mcp`, and printing `claude mcp remove tailscale-docs
+--scope user` for MC when the record lists the server but `claude` is not on PATH; and (7)
+removing the share directories only when empty, and never `~/.local/bin` or the skills directory;
+because a path read from an edited record could aim the uninstaller's deletes anywhere; another
+program or a link MC made at the same path is not the installer's; the gate should go on
+prompting while the guard code it protects is installed; the record is the only list of the rules
+added, and without it a guess could remove rules MC wrote; a rule spelled for one Claude directory
+is not present in another's settings; a skipped removal leaves what it would have removed; and
+those directories hold other programs' files.
+
 ---
 
 ## 0. The design on one page

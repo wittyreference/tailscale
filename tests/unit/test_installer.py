@@ -210,6 +210,8 @@ def run_installer(box, fixture=None, *, now=NOW, pin=None, environ=None, **optio
     the docs MCP step is skipped unless a test asks for it, so claude never runs.
     """
     settings = {"upstream": fixture is not None, "mcp": False, **options}
+    if settings.get("uninstall"):
+        settings.pop("upstream")
     if fixture is not None:
         settings.update(upstream_url=fixture.url, upstream_pin=pin or fixture.pin)
     out = io.StringIO()
@@ -223,6 +225,11 @@ def snapshot(*roots):
     seen = {}
     for root in roots:
         if not os.path.lexists(root):
+            continue
+        if not os.path.isdir(root) or os.path.islink(root):
+            seen[str(root)] = ("path", stat.S_IMODE(os.lstat(root).st_mode),
+                               os.readlink(root) if os.path.islink(root)
+                               else Path(root).read_bytes())
             continue
         seen[str(root)] = ("dir", stat.S_IMODE(os.lstat(root).st_mode))
         for directory, subdirectories, names in os.walk(root):
@@ -508,10 +515,126 @@ def test_the_wrapper_refuses_root_and_runs_the_installer_isolated(box, tmp_path)
 
 def test_the_make_targets_run_the_wrapper():
     # `make -n` prints each recipe without running it: MC's entry points are the wrapper's.
-    done = subprocess.run(["make", "-n", "-C", str(REPO), "install", "install-dry-run"],
-                          capture_output=True, text=True, timeout=60, check=False,
+    done = subprocess.run(["make", "-n", "-C", str(REPO), "install", "install-dry-run",
+                           "uninstall"], capture_output=True, text=True, timeout=60, check=False,
                           env={"PATH": "/usr/bin:/bin", "LANG": "C.UTF-8"})
     assert done.returncode == 0, done.stderr
     recipes = [line for line in done.stdout.splitlines() if not line.startswith("make")]
-    assert recipes == ["./install-tailnet.sh", "./install-tailnet.sh --dry-run"]
+    assert recipes == ["./install-tailnet.sh", "./install-tailnet.sh --dry-run",
+                       "./install-tailnet.sh --uninstall"]
     assert os.access(REPO / "install-tailnet.sh", os.X_OK)
+
+
+# --- Uninstall: reverse install.json, and never touch what is MC's ---
+
+
+def mc_files(box):
+    """Lay out what MC and the CLI keep after an install: credentials, the protected list, the
+    token cache, the audit log, the apply lock and a draft. Secrets are assembled at runtime."""
+    target = box.target
+    for name, text in (("read.json", '{"client_id": "k1", "secret": "file:read.secret"}'),
+                       ("read.secret", "test-client-" + "read0001"),
+                       ("write.json", '{"client_id": "k2", "secret": "file:write.secret"}'),
+                       ("write.secret", "test-client-" + "write001"),
+                       ("read-token.json", '{"token": "x"}'),
+                       ("protected", "self nAbc123\n")):
+        (target.config / name).write_text(text)
+        (target.config / name).chmod(0o600)
+    (target.state / "audit.jsonl").write_text('{"event": "token.mint"}\n')
+    (target.state / "apply.lock").write_text("")
+    draft = target.drafts / "draft-20261026T120000Z"
+    draft.mkdir()
+    (draft / "candidate.hujson").write_text("{}\n")
+    return snapshot(target.config, target.state)
+
+
+def test_uninstall_never_touches_credentials_protected_audit_or_drafts(box, upstream_repo):
+    run_installer(box, upstream_repo)
+    kept = mc_files(box)
+    code, out = run_installer(box, uninstall=True, now=LATER)
+    assert code == 0, out
+    assert snapshot(box.target.config, box.target.state) == kept
+    # MC is told where they are, and that deleting files revokes nothing.
+    tail = out[out.index("Left in place"):]
+    for path in (box.target.config, box.target.state / "audit.jsonl", box.target.drafts):
+        assert str(path) in tail
+    assert "not revocation" in tail and "Trust credentials" in tail and "Revoke" in tail
+
+
+def test_uninstall_reverses_the_install_record(box, upstream_repo):
+    run_installer(box, upstream_repo)
+    target = box.target
+    # MC edits one of our rules and adds one of their own after the install.
+    settings = json.loads(target.settings.read_text())
+    ask = settings["permissions"]["ask"]
+    ask[ask.index("Bash(*install-tailnet*)")] = "Bash(*install-tailnet.sh*)"
+    ask.append("Bash(git push*)")
+    target.settings.write_text(json.dumps(settings))
+    code, out = run_installer(box, uninstall=True, now=LATER)
+    assert code == 0, out
+    for path in (target.launcher, target.lib, target.spec, target.skill, target.upstream_copy,
+                 target.clone, target.record, target.share):
+        assert not os.path.lexists(path), path
+    # Only the rules the record lists come out; the edited one is reported and left.
+    permissions = json.loads(target.settings.read_text())["permissions"]
+    assert permissions == {"ask": ["Bash(*install-tailnet.sh*)", "Bash(git push*)"], "deny": []}
+    assert "Bash(*install-tailnet*)" in out and "left to MC" in out
+    assert (box.claude / "settings.json.tailnet-bak-20261027T093000Z").is_file()
+    # With the record gone there is nothing left to reverse, and nothing changes.
+    before = snapshot(box.home, box.claude)
+    code, out = run_installer(box, uninstall=True, now=LATER)
+    assert code == 0 and snapshot(box.home, box.claude) == before
+    assert f"no install record at {target.record}" in out
+
+
+def test_uninstall_leaves_what_is_not_ours(box, upstream_repo):
+    run_installer(box, upstream_repo)
+    target = box.target
+    # Since the install, the launcher was replaced by another program, and the skill's
+    # marker was removed: neither is the installer's to remove now.
+    target.launcher.write_text("#!/bin/sh\necho another tailnet\n")
+    (target.skill / MARKER).unlink()
+    foreign = snapshot(target.launcher, target.skill)
+    code, out = run_installer(box, uninstall=True, now=LATER)
+    assert code == 0, out
+    assert snapshot(target.launcher, target.skill) == foreign
+    assert "launcher: left alone" in out and "skill: left alone" in out
+    assert not os.path.lexists(target.lib) and not os.path.lexists(target.upstream_copy)
+
+
+def test_uninstall_dry_run_removes_nothing(box, upstream_repo, tmp_path):
+    run_installer(box, upstream_repo)
+    before = snapshot(tmp_path)
+    code, out = run_installer(box, uninstall=True, dry_run=True, now=LATER)
+    assert code == 0, out
+    assert snapshot(tmp_path) == before
+    for step in (f"remove the launcher {box.target.launcher}", f"remove {box.target.lib}",
+                 f"remove {box.target.skill}", f"remove the clone {box.target.clone}",
+                 "remove 10 rules"):
+        assert f"would: {step}" in out, step
+
+
+def test_uninstall_keeps_the_record_when_a_step_stops(box):
+    run_installer(box)
+    target = box.target
+    # A settings file MC broke cannot be edited safely, so the rules stay, and so does the
+    # record that lists them: a later uninstall can still take them out.
+    target.settings.write_text("{not json")
+    code, out = run_installer(box, uninstall=True, now=LATER)
+    assert code == 1
+    assert "settings: STOPPED" in out and "Remove these rules from" in out
+    assert target.record.is_file() and "record: kept" in out
+    assert target.settings.read_text() == "{not json"
+
+
+def test_uninstall_without_claude_says_how_to_remove_the_docs_server(box, tmp_path):
+    run_installer(box)
+    record = json.loads(box.target.record.read_text())
+    record["added"]["mcp"] = True
+    box.target.record.write_text(json.dumps(record))
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    code, out = run_installer(box, uninstall=True, mcp=True, now=LATER,
+                              environ={**box.env, "PATH": str(bin_dir)})
+    assert code == 0, out
+    assert f"mcp: not removed: claude is not on PATH; run: {' '.join(install.MCP_REMOVE)}" in out
