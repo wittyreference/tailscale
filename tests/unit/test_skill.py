@@ -508,3 +508,12 @@ def test_the_skill_never_claims_deny_rules_stop_a_recursive_read():
     start, end = section(credentials, "7. Postures: standing or session-scoped")
     assert "grep -r tskey- ~/.config" in credentials[start:end]
     assert "a call a deny rule refuses" in credentials[start:end]
+
+
+def test_the_key_expired_row_keeps_a_tagged_host_s_tags():
+    # A70: a plain re-authentication strips a tagged host's tags [TAGS L72], so the verdict
+    # table gives a tagged destination the console extension or a re-auth with its tags.
+    text = reference_text("diagnose-port.md")
+    [row] = [line for line in text.splitlines() if line.startswith("| `KEY_EXPIRED` |")]
+    for words in ("Temporarily extend key", "30 minutes", "--advertise-tags=", "drops its tags"):
+        assert words in row, words

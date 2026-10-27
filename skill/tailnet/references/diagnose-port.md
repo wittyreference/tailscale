@@ -110,7 +110,7 @@ calls made. Human output gives one verdict line per host, then the evidence, eac
 |---|---|---|---|---|
 | `SOURCE_DOWN` | Self mode; step 0 failed | The droplet is not on the tailnet right now: not Running, not online, or no Tailscale IPs | Anything about the destinations; an empty peer list alone never gives it (DESIGN A52) | `tailscale status` on the droplet |
 | `NOT_FOUND` / `AMBIGUOUS` / `SAME_DEVICE` | Step 1 | The argument did not name exactly one other device | — | List the candidates; never pick one |
-| `KEY_EXPIRED` | Gate | The destination's key has lapsed: it is off the tailnet (P9) | — | MC re-authenticates at the host; then `tailnet device disable-key-expiry` |
+| `KEY_EXPIRED` | Gate | The destination's key has lapsed: it is off the tailnet (P9) | — | User-owned: MC re-authenticates at the host; then `tailnet device disable-key-expiry`. Tagged: a plain re-auth makes it user-owned and drops its tags [TAGS L72], so MC uses **Temporarily extend key** in the console and `disable-key-expiry` runs within its 30 minutes [key-expiry L49-54], or else MC runs `sudo tailscale up --advertise-tags=<its tags> --force-reauth`, which turns expiry off itself [TAGS L84, L297-300] (DESIGN A70) |
 | `DEST_OFFLINE` | Gate | Not connected to control now | That the host is powered off | Report `lastSeen` as given |
 | `SHIELDS_UP` | Gate | The device refuses all incoming tailnet connections | — | On the host: `tailscale get shields-up` |
 | `PATH_DOWN` | Self mode; TSMP failed; the destination is in this host's netmap; the network test named no drop (DESIGN A52) | A connectivity fault, not policy [manage L41] | — | `tailscale netcheck`, `tailscale status`; the official skill's `connectivity.md` |
@@ -261,7 +261,8 @@ Each is reported as unknown when it matters, never filled in.
 
 Read or fetched 2026-10-26.
 
-- `DESIGN`: `DESIGN.md` §5.2, §5.3, §15, §24, §26 and Amendments A31, A32 and A50-A54 in this repo.
+- `DESIGN`: `DESIGN.md` §5.2, §5.3, §15, §24, §26 and Amendments A31, A32, A50-A54 and A70 in this
+  repo.
 - `mc`, `critic`, `api`, `policy-access`: `docs/research/mc-tailnet.md`, `critic.md`,
   `api-surface.md`, `policy-access.md` (all 2026-10-26).
 - `fleet.yaml`: `/home/user/tailnet-ssh/fleet/fleet.yaml` at `2cab922` (2026-10-10).
@@ -275,6 +276,7 @@ Read or fetched 2026-10-26.
 |---|---|---|
 | SSH | https://tailscale.com/docs/features/tailscale-ssh | Jan 5, 2026 |
 | TAGS | https://tailscale.com/docs/features/tags | Dec 4, 2025 |
+| key-expiry | https://tailscale.com/docs/features/access-control/key-expiry (fetched 2026-10-27) | Jan 5, 2026 |
 | policy-file | https://tailscale.com/docs/reference/syntax/policy-file | Apr 8, 2026 |
 | manage | https://tailscale.com/docs/features/tailnet-policy-file/manage-tailnet-policies | Mar 13, 2026 |
 | ping-types | https://tailscale.com/docs/reference/ping-types | Jan 13, 2026 |

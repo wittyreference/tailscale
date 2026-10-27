@@ -280,6 +280,14 @@ def warnings(device, now):
     else:
         when = f"on {device.expires!r}, a date the CLI cannot read"
     rejoin = "it must re-authenticate to rejoin the tailnet"
+    if device.tags:
+        # A re-authentication as a user strips every tag [TAGS L72], so a tagged device's way
+        # back is the console's 30-minute extension, then disable-key-expiry [key-expiry
+        # L49-54], or a re-auth that advertises its tags (A70).
+        rejoin = ("it is off the tailnet until MC uses Temporarily extend key in the console and "
+                  "key expiry is disabled within 30 minutes, or it re-authenticates with "
+                  f"--advertise-tags={','.join(device.tags)}; a plain re-authentication drops "
+                  "its tags")
     if device.tags and device.key_expiry_disabled is False:
         # Retagging never turned expiry off, so a fleet box drops off the tailnet when its
         # old key lapses (P9) unless someone disables it.

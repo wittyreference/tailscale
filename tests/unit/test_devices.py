@@ -159,6 +159,11 @@ def test_a_tagged_device_with_expiry_on_is_flagged():
     [(code, message, _), expired_warning] = devices.warnings(lapsed, NOW)
     assert (code, expired_warning[0]) == ("TAGGED_KEY_EXPIRY_ON", "KEY_EXPIRED")
     assert "already passed" in message and "in -" not in message
+    # A plain re-authentication would strip a tagged device's tags [TAGS L72], so its warnings
+    # name the ways back that keep them; a user-owned device just re-authenticates.
+    for text in (message, expired_warning[1]):
+        assert "--advertise-tags=tag:fleet" in text and "Temporarily extend key" in text
+    assert "re-authenticate to rejoin" in devices.warnings(expired, NOW)[0][1]
 
 
 def test_cloned_node_state_and_blocked_incoming_are_warned_with_their_sources():

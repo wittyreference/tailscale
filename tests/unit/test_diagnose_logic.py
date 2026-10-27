@@ -585,9 +585,9 @@ def test_next_steps_name_who_acts_for_each_verdict():
     [draft] = steps("POLICY_DROP", dest=found["spec5"])
     assert draft["run"] == "tailnet policy draft --name allow-tcp-22"
     assert "from tag:dev to spec5 on tcp:22" in draft["why"]
-    mc, disable = steps("KEY_EXPIRED")
+    mc, disable = steps("KEY_EXPIRED", dest=found["albini"])
     assert (mc["who"], mc["needs"]) == ("mc", "terminal")
-    assert disable["run"] == "tailnet device disable-key-expiry nPi5x001CNTRL"
+    assert disable["run"] == "tailnet device disable-key-expiry nAlbini1CNTRL"
     assert [s["run"] for s in steps("NOT_FOUND", dest=None)] == ["tailnet device list"]
     # Verdicts with nothing left to do for anyone.
     for code in ("ALLOWED", "ADMITTED_CHECK_MODE", "DEST_OFFLINE", "INCONCLUSIVE"):
@@ -600,3 +600,25 @@ def test_next_steps_name_who_acts_for_each_verdict():
     assert [s["run"] for s in others] == [
         "tailnet diagnose nPi5x001CNTRL --port 22 --from nAlbini1CNTRL --ssh-user mc",
         "tailnet diagnose nPi5x001CNTRL --port 22 --from nPhone01CNTRL --ssh-user mc"]
+
+
+def test_a_tagged_host_whose_key_expired_is_brought_back_with_its_tags():
+    # A re-authentication as a user removes every tag [TAGS L72], and console tagging leaves
+    # the host's own advertised tags empty, so the plain re-auth the user-owned steps name
+    # would make pi5 user-owned. The console's 30-minute extension needs no re-auth and is
+    # followed by disable-key-expiry [key-expiry L49-54]; a re-auth that advertises the tags
+    # turns expiry off by itself [TAGS L84, L297-300].
+    found = inventory()
+    pi5 = found["pi5"]
+    assert pi5.tags == ("tag:fleet",)
+    me = diagnose.Source("self", found["claude-factory"], self_source="line")
+    extend, disable, reauth = diagnose.next_steps(
+        "KEY_EXPIRED", pi5, port=22, user=None, source=me, ids=("tag:dev",),
+        inventory=list(found.values()))
+    assert (extend["who"], extend["needs"]) == ("mc", "console")
+    assert "Temporarily extend key" in extend["do"] and "pi5" in extend["do"]
+    assert disable["run"] == "tailnet device disable-key-expiry nPi5x001CNTRL"
+    assert "30 minutes" in disable["why"]
+    assert (reauth["who"], reauth["needs"]) == ("mc", "terminal")
+    assert "sudo tailscale up --advertise-tags=tag:fleet --force-reauth" in reauth["do"]
+    assert "drops its tags" in reauth["why"] and "no disable-key-expiry" in reauth["why"]

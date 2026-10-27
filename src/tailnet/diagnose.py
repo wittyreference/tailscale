@@ -38,6 +38,7 @@ _IDENTITY = re.compile(r"tag:[A-Za-z0-9][A-Za-z0-9-]*|[^\s@*]+@[^\s@*]+")
 # trusted inside a block MC runs: a newline would end a comment and start a command. Anything
 # but these characters becomes "?"; doctor's protected-list block uses the same rule.
 _UNSAFE_NAME = re.compile(r"[^A-Za-z0-9._-]")
+_UNSAFE_TAG = re.compile(r"[^A-Za-z0-9:-]")
 
 # The verdicts that mean the port is reachable (§15.2 step 7); every other one exits 8.
 REACHABLE = frozenset({"OPEN", "ADMITTED_CHECK_MODE", "ALLOWED"})
@@ -235,8 +236,10 @@ def verdict(facts):
                                          f"{facts.dest_reason}")
     if facts.key_expired:
         return Verdict("KEY_EXPIRED", "its node key expired with key expiry on, so it is off the "
-                                      "tailnet until MC re-authenticates it at the host (P9); "
-                                      "then disable key expiry so it cannot lapse again")
+                                      "tailnet until its key is renewed (P9): a user-owned host "
+                                      "re-authenticates, a tagged one keeps its tags only by the "
+                                      "steps in next; then key expiry goes off so it cannot "
+                                      "lapse again")
     if facts.online is False:
         return Verdict("DEST_OFFLINE", _offline(facts))
     if facts.blocks_incoming:
@@ -920,6 +923,8 @@ def next_steps(code, dest, *, port, user, source, ids, inventory, on_host=False)
                                               "source with --from, or another destination")]
     # Reduced once, so every step that names the host, the terminal ones included, is safe.
     name = safe_name(dest.hostname or dest.node_id)
+    if code == "KEY_EXPIRED" and dest.tags:
+        return _tagged_key_expired(dest, name)
     if code == "KEY_EXPIRED":
         return [{"who": "mc", "needs": "terminal",
                  "do": f"re-authenticate {name} at the host, so it rejoins the tailnet",
@@ -970,6 +975,35 @@ def next_steps(code, dest, *, port, user, source, ids, inventory, on_host=False)
         return _on_host(dest, name, port=port, user=user, source=source, inventory=inventory,
                         ts_ssh=code == "TS_SSH_TIMEOUT_UNEXPLAINED")
     return []
+
+
+def _tagged_key_expired(dest, name):
+    """KEY_EXPIRED's steps for a tagged host: back on the tailnet with its tags kept (A70).
+
+    Re-authenticating as a user removes every tag [TAGS L72], and a host tagged in the
+    console advertises none itself, so the plain re-auth a user-owned host is given would
+    leave it user-owned. The console extends an expired key for 30 minutes, inside which key
+    expiry can be disabled, with no re-auth [key-expiry L49-54]; a re-auth that advertises
+    the tags turns expiry off by itself [TAGS L84, L297-300].
+    """
+    # Tags reach a line MC pastes into a shell, so anything but a tag's own characters goes.
+    tags = ",".join(_UNSAFE_TAG.sub("?", tag) for tag in dest.tags)
+    return [{"who": "mc", "needs": "console",
+             "do": f"Machines page → {name} → its menu → Temporarily extend key; then tell the "
+                   "agent",
+             "why": "its key expired with key expiry on, so it is off the tailnet (P9); the "
+                    "extension lasts 30 minutes, keeps its tags and needs no re-authentication "
+                    "[key-expiry L49-54]"},
+            _agent(f"tailnet device disable-key-expiry {dest.node_id}",
+                   "within those 30 minutes: plans turning key expiry off so it cannot lapse "
+                   "again; MC approves the apply"),
+            {"who": "mc", "needs": "terminal",
+             "do": f"only if the console offers no extension, on {name}: "
+                   f"sudo tailscale up --advertise-tags={tags} --force-reauth",
+             "why": "a re-authentication without --advertise-tags makes it user-owned and drops "
+                    "its tags [TAGS L72]; with them Tailscale turns key expiry off itself, so no "
+                    "disable-key-expiry follows [TAGS L84]; it can cut the connection, so run it "
+                    "where another way in exists [key-expiry L43]"}]
 
 
 def _on_host(dest, name, *, port, user, source, inventory, ts_ssh=False):

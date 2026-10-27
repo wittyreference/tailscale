@@ -1149,6 +1149,26 @@ transcript (§20.4), and an agent told they hold in every mode would treat a bro
 Deny tripwires for recursive reads, `blockReadsOutsideWorkingDirectories` and the sandbox's
 `denyRead` (§23) would each change what MC is prompted for or allowed, so they wait for MC.
 
+**A70. (review, 2026-10-26) finding 31:** §15.2 step 7's `KEY_EXPIRED` row, `diagnose.next_steps`,
+the verdict's explanation, `references/diagnose-port.md` and `device list`'s expiry warnings told
+every destination the same thing, "MC re-authenticates at the host; then `device
+disable-key-expiry`"; for spec5, nomad-b or pi5, tagged in the console, whose own advertised tags
+are empty (pi5's prefs read `AdvertiseTags: null`; the others **[inference]**), the obvious re-auth (`tailscale up --force-reauth` [key-expiry L37-39]) authenticates
+as MC's user, which "removes all tags from the device" [TAGS L72], so every `tag:fleet` rule stops
+applying and the follow-up becomes an R2 user-owned write. For a tagged destination the next steps
+are now: MC uses **Temporarily extend key** on the Machines page, then the agent's
+`disable-key-expiry` within its 30 minutes, which keeps the tags and needs no re-auth
+[key-expiry L49-54]; or, only when the console offers no extension, `sudo tailscale up
+--advertise-tags=<its tags> --force-reauth` on the host, which turns expiry off by itself, so no
+disable step follows [TAGS L84, L297-300], with the warning that it can cut the connection
+[key-expiry L43]. A user-owned destination keeps the two steps, the explanation no longer
+prescribes the re-auth, and `KEY_EXPIRED` and `TAGGED_KEY_EXPIRY_ON` name both ways back for a
+tagged device; because the tags are what every grant, ssh rule and test for the fleet names, and
+the console extension is first-party and avoids a re-auth over a link that may drop. The tags in
+the pasted command keep only a tag's own characters, as A54 does for names. [key-expiry] is
+https://tailscale.com/docs/features/access-control/key-expiry, last validated Jan 5, 2026,
+fetched 2026-10-27.
+
 ---
 
 ## 0. The design on one page
