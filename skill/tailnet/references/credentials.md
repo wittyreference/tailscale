@@ -206,7 +206,7 @@ per turn and say what it proves.
 
 | Posture | What it means | Holds against |
 |---|---|---|
-| **Standing** (the default) | `write.json` and `write.secret` stay in place | Accidents, in every interactive mode: the ask rule prompts for every `--apply`, bypass and auto included |
+| **Standing** (the default) | `write.json` and `write.secret` stay in place | Accidents, in every interactive mode: the ask rule prompts for every `--apply`, bypass and auto included, unless a `PermissionRequest` hook answers that prompt (below) |
 | **Session-scoped** | Run `tailnet credentials forget write` after each write session; `credentials set write` again next time | A determined agent too: with no write secret on disk, nothing on the droplet can write to the tailnet |
 
 - Which posture MC wants is open question MC8. After a write session, offer
@@ -216,10 +216,17 @@ per turn and say what it proves.
   still exists in Tailscale.
 - **The levers, and where each fails** (DESIGN §2). The ask rule `Bash(*tailnet*--apply*)` prompts
   in every interactive mode [PM L34-36, L327, L650], and a headless `-p` run denies the call
-  [PM L56]. Deny rules on `~/.config/tailnet` hold in every mode [PM L30], but not against a script
-  that opens files itself [PERM L356]. An installed mod that handles `tool.check` can approve an
-  ask-matched call without prompting when the machine has no managed settings and the session has
-  no Team or Enterprise login [PERM L641-643]; that MC's setup is that case is [inference].
+  [PM L56] unless a hook or a `--permission-prompt-tool` answers it. A `PermissionRequest` hook
+  that fires on Bash, from user, project or local settings, `--settings` or an enabled plugin,
+  answers the prompt for MC in every mode that asks and in `-p`; deny rules still beat it
+  [hooks.md PermissionRequest; permission-modes.md L924, read 2026-10-27]. `tailnet doctor`
+  (L9) checks MC's user settings only. `"allowManagedHooksOnly": true` in
+  `/etc/claude-code/managed-settings.json` (root) blocks every user, project, local and plugin
+  hook, MC's own included, so it is MC's call (DESIGN A67). Deny rules on `~/.config/tailnet`
+  hold in every mode [PM L30], but not against a script that opens files itself [PERM L356]. An
+  installed mod that handles `tool.check` can approve an ask-matched call without prompting when
+  the machine has no managed settings and the session has no Team or Enterprise login
+  [PERM L641-643]; that MC's setup is that case is [inference].
   **One enforced surface, not the whole surface.**
 
 ## 8. The single-client fallback, and its cost
@@ -301,6 +308,10 @@ Read or fetched 2026-10-26.
   https://code.claude.com/docs/en/permissions.md, fetched 2026-10-26 (these pages carry no "Last
   validated" date). Line numbers are those DESIGN §2 cites; L30-36, L56, L327, L650 and PERM
   L356, L641-643 were re-read in the saved copies for this file.
+- `hooks.md PermissionRequest`, `permission-modes.md L924` and `managed-settings.md`: Claude
+  Code's https://code.claude.com/docs/en/hooks.md (its "PermissionRequest" and "Matcher
+  patterns" sections), permission-modes.md and managed-settings.md, fetched 2026-10-27; L924 is a
+  line of that day's permission-modes.md copy, not of the copy `PM` numbers.
 - Tailscale docs, fetched as Markdown with curl; line numbers are lines of that copy:
 
 | Key | URL | Last validated |

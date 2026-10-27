@@ -1089,6 +1089,27 @@ narrower there than §20.4 implies; the gate rule and the guard's refusal when i
 untouched. Writing the default and a basename form beside the absolute one would change what MC
 is prompted for, so it waits for MC's decision.
 
+**A67. (review, 2026-10-26) finding 5:** D2 dropped SF's hook because "a hook's own answer cannot
+beat a matching ask rule [PERM L631]", and §0 item 3, §2 L3, the README, SKILL.md and
+`references/credentials.md` called the gate's prompt unconditional but for command text, a script
+and a `tool.check` mod, with `-p` denying writes "by design"; PERM L631 speaks of `PreToolUse`
+hooks only, while a `PermissionRequest` hook that returns allow answers the prompt an ask rule
+raises, in every mode that asks and in `-p`, where a `--permission-prompt-tool` or `canUseTool`
+host may answer too [hooks.md PermissionRequest; permission-modes.md L96, L924, fetched
+2026-10-27], and such a hook can come from user, project or local settings, `--settings` or an
+enabled plugin; so the standing posture's "every `--apply` asks you" failed whenever a loaded
+source held one that fires on Bash. L3 gains failure (d), that hook and those hosts; deny rules
+still beat them, so L4 is unchanged; the README, SKILL.md (its levers, its `-p` rule, and
+"Permissions are MC's", which now names hooks and project settings) and credentials.md §7 say so;
+and doctor's L9 reads MC's user settings through `gate.permission_request_hooks` and is WARN,
+naming the matchers, when one fires on Bash by hooks.md's matcher table (an exact name or a `|`
+or `,` list, else an unanchored pattern, and empty, `*` or absent for every tool), INFO otherwise,
+its note saying that project settings, `--settings` and plugins are not checked; because the CLI
+cannot tell whether a prompt was shown, so it says where the gate fails and looks where it can.
+`"allowManagedHooksOnly": true` in `/etc/claude-code/managed-settings.json` closes the route but
+needs root and stops MC's own hooks too, and ask rules on edits to a project's
+`.claude/settings*.json` would change what MC is prompted for; both wait for MC's decision.
+
 ---
 
 ## 0. The design on one page

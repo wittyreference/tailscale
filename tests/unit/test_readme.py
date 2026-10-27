@@ -176,3 +176,15 @@ def test_every_code_block_holds_exactly_one_command():
 def test_paragraphs_stay_phone_sized():
     for unit in prose_units(text()):
         assert len(unit.split()) <= MAX_WORDS, f"{len(unit.split())} words: {unit[:80]}…"
+
+
+def test_the_levers_name_permission_request_hooks_and_qualify_headless_runs():
+    # A67: a PermissionRequest hook's allow answers the gate's prompt in every mode that asks
+    # and in -p [hooks.md PermissionRequest], so no line may promise the prompt unconditionally.
+    units = prose_units(section("The levers"))
+    [ask] = [unit for unit in units if unit.startswith("- **The ask rule.**")]
+    assert "claude -p" in ask and "unless a hook" in ask
+    assert any("`PermissionRequest` hook" in unit and "claude -p" in unit for unit in units)
+    [standing] = [unit for unit in units if unit.startswith("- **Standing:**")]
+    assert "unless a hook answers" in standing
+    assert "allowManagedHooksOnly" in section("Disarm, revoke, uninstall")

@@ -1036,12 +1036,36 @@ class _Run:
                         "(L2 holds)")
         notes = [
             ("ask rules prompt in every interactive mode, bypassPermissions and auto included; "
-             "headless `claude -p` runs deny writes instead [PM L34-36, L56, L327]"),
+             "headless `claude -p` runs deny writes unless a PermissionRequest hook, "
+             "--permission-prompt-tool or canUseTool callback answers [PM L34-36, L56, L327]"),
             ("an installed mod that handles tool.check can approve --apply without prompting you "
              "when there are no managed settings and no Team or Enterprise login [PERM L641-643]"),
-            standing,
         ]
-        self.add("L9", "INFO", standing, {"notes": notes})
+        hooks_note, hooked = self._permission_request_hooks()
+        # The last note is the finding: a hook that can answer the gate prompt outranks the
+        # posture, because the standing posture rests on that prompt (A67).
+        notes += [standing, hooks_note] if hooked else [hooks_note, standing]
+        self.add("L9", "WARN" if hooked else "INFO", notes[-1], {"notes": notes})
+
+    def _permission_request_hooks(self):
+        """L9's note on PermissionRequest hooks in MC's user settings, and whether any fires
+        on Bash (A67): such a hook's allow answers the --apply prompt for MC."""
+        settings = self.posture.claude_settings
+        found = gate.permission_request_hooks(settings)
+        what = ("answer the --apply prompt for you, in every mode that asks and in `claude -p`; "
+                "deny rules still hold [hooks.md PermissionRequest]")
+        unchecked = "project settings, --settings and plugins are not checked"
+        if found is None:
+            return (f"a PermissionRequest hook that fires on Bash can {what}; {settings} could "
+                    f"not be read for hooks; {unchecked}"), False
+        if not found:
+            return (f"a PermissionRequest hook that fires on Bash can {what}; {settings} holds "
+                    f"none; {unchecked}"), False
+        # Matchers are MC's own text from a file that may hold other values, so each is cut.
+        named = ", ".join(json.dumps(matcher[:40]) for matcher in found)
+        return (f"{settings} holds {len(found)} PermissionRequest hook"
+                f"{'s' if len(found) > 1 else ''} that fire on Bash (matcher {named}): one that "
+                f"returns allow can {what}; {unchecked}"), True
 
     def clock(self):
         """L10: the API's Date against this host's clock; skew misleads every expiry sum."""

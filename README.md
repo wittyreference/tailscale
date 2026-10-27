@@ -38,7 +38,8 @@ No single lever is the whole protection. This is one enforced surface, not the w
 What holds:
 
 - **The ask rule.** Claude Code asks you before every `--apply`, in every interactive mode, bypass
-  and auto included. A headless `claude -p` run refuses the write instead of asking.
+  and auto included. A headless `claude -p` run refuses the write instead of asking, unless a
+  hook or a prompt tool answers for you (below).
 - **The separate write secret.** The read client cannot write. With no write secret on disk,
   nothing on the droplet can write to your tailnet.
 - **Deny rules.** Claude's own tools cannot read or edit `~/.config/tailnet`, in any mode.
@@ -55,11 +56,14 @@ What does not hold:
 - A script that opens the secret file itself, past the deny rules.
 - An installed Claude Code mod that handles `tool.check`, when the machine has no managed settings
   and no Team or Enterprise login: it can approve an `--apply` without asking you.
+- A `PermissionRequest` hook that fires on Bash, in any settings file Claude Code loads or an
+  enabled plugin: its "allow" answers the `--apply` prompt for you, `claude -p` included, as
+  does a `-p` run's `--permission-prompt-tool`. Doctor checks your user settings only.
 
 **Two postures.** You choose; the default is standing.
 
 - **Standing:** the write client stays on disk. Safe against accidents, because every `--apply`
-  still asks you.
+  still asks you, unless a hook answers for you (above).
 - **Session-scoped:** after each write session, run `tailnet credentials forget write`, and
   `tailnet credentials set write` next time. This also holds against a determined agent.
 
@@ -159,6 +163,10 @@ protected list, the audit log or policy drafts, and it revokes nothing:
 ```sh
 sudo chattr +a ~/.local/state/tailnet/audit.jsonl
 ```
+
+Closing the hook route also needs root: `"allowManagedHooksOnly": true` in
+`/etc/claude-code/managed-settings.json` stops every user, project and plugin hook, your own
+included. That cost is why it is your call, not the installer's.
 
 ## For developers
 

@@ -152,3 +152,45 @@ def test_the_claude_dir_comes_from_the_posture_and_claude_config_dir(tmp_path):
     # Test posture's settings live under its own home, which acts as the Claude directory.
     assert gate.claude_dir(test, {"CLAUDE_CONFIG_DIR": "/srv/claude"}) == str(
         test.claude_settings.parent)
+
+
+def hooked(path, groups, **extra):
+    """Write a settings file holding these PermissionRequest hook groups, and return its path."""
+    return settings(path, hooks={"PermissionRequest": groups}, **extra)
+
+
+def command_hook():
+    """One hook handler of the shape hooks.md documents; what it runs is beside the point."""
+    return [{"type": "command", "command": "/usr/local/bin/approve-known-safe"}]
+
+
+def test_permission_request_hooks_that_fire_on_bash_are_found(tmp_path):
+    # A PermissionRequest hook that answers allow answers the prompt the gate's ask rule
+    # raises, in every mode that asks and in -p runs [hooks.md PermissionRequest;
+    # permission-modes.md L924], so the matchers that fire on Bash are what doctor names.
+    groups = [{"matcher": matcher, "hooks": command_hook()}
+              for matcher in ("Bash", "Edit|Write", "Edit, Bash", "", "*", "^Ba", "Notebook.*",
+                              "Bas", "mcp__.*")]
+    groups.append({"hooks": command_hook()})
+    path = hooked(tmp_path / "settings.json", groups)
+    # The exact-list form matches whole names; any other character makes it an unanchored
+    # regular expression; empty, `*` or absent fires on every tool [hooks.md matcher table].
+    assert gate.permission_request_hooks(path) == ["Bash", "Edit, Bash", "", "*", "^Ba", ""]
+
+
+def test_settings_without_such_a_hook_hold_none_and_unreadable_ones_cannot_tell(tmp_path):
+    ask, deny = every_rule()
+    plain = settings(tmp_path / "plain.json", ask=ask, deny=deny,
+                     hooks={"PreToolUse": [{"matcher": "Bash", "hooks": command_hook()}]})
+    assert gate.permission_request_hooks(plain) == []
+    assert gate.permission_request_hooks(tmp_path / "absent.json") == []
+    # A file that cannot be read as settings may hold one, so the answer is unknown, never no.
+    for content in ("{not json", '{"x": NaN}', '{"hooks": []}',
+                    '{"hooks": {"PermissionRequest": {"matcher": "Bash"}}}'):
+        path = tmp_path / "broken.json"
+        path.write_text(content)
+        assert gate.permission_request_hooks(path) is None, content
+    # A matcher that is not text, or a pattern Python cannot compile, may still fire on Bash.
+    odd = hooked(tmp_path / "odd.json", [{"matcher": 7, "hooks": command_hook()},
+                                         {"matcher": "(?<x", "hooks": command_hook()}])
+    assert gate.permission_request_hooks(odd) == ["7", "(?<x"]

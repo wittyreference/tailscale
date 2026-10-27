@@ -460,3 +460,22 @@ def test_every_reference_file_ends_with_its_dated_sources():
         # Its opening line says when they were read, which is the date every fact carries.
         assert re.search(r"^Read\b.*\b20\d\d-\d\d-\d\d\b", text[start:end], re.MULTILINE), \
             f"{name}: the sources do not say when they were read"
+
+
+def test_the_levers_and_the_headless_rule_name_permission_request_hooks():
+    # A67: such a hook answers the --apply prompt in every mode that asks and in -p, from any
+    # settings file or plugin; the agent is told so, and never to set one up.
+    text = skill_text()
+    start, end = section(text, "Levers, in five lines")
+    [fails] = [item for item in bullets(text[start:end]) if item.startswith("Does not hold")]
+    assert "`PermissionRequest` hook" in fails and "-p" in fails
+    start, end = section(text, "Hard rules")
+    rules = bullets(text[start:end])
+    [headless] = [rule for rule in rules if "claude -p" in rule]
+    assert "unless a `PermissionRequest` hook" in headless and "by design" not in headless
+    [permissions] = [rule for rule in rules if rule.startswith("**Permissions are MC's.**")]
+    assert "hooks" in permissions and ".claude/settings*.json" in permissions
+    credentials = reference_text("credentials.md")
+    start, end = section(credentials, "7. Postures: standing or session-scoped")
+    for words in ("`PermissionRequest` hook", "allowManagedHooksOnly", "unless a hook"):
+        assert words in credentials[start:end], words

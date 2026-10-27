@@ -1,9 +1,10 @@
-# ABOUTME: The ask gate: reads the Claude Code rules in rules.json and checks MC's settings still hold them.
-# ABOUTME: Every --apply refuses without the gate rule; status and doctor report each missing rule (§11.5).
+# ABOUTME: The ask gate: reads the Claude Code rules in rules.json and checks MC's settings still hold them,
+# ABOUTME: and finds hooks there that can answer its prompt; every --apply refuses without it (§11.5, A67).
 
 import json
 import math
 import os
+import re
 import stat
 from pathlib import Path
 
@@ -158,3 +159,53 @@ def gate_present(settings_path):
     --apply in front of MC. In deny or allow it would not prompt, so it does not count."""
     ask, _ = _permissions(settings_path)
     return rules()["gate"] in ask
+
+
+# A matcher of only these characters is an exact tool name, or a list of them split on `|`
+# or `,`; any other character makes it an unanchored JavaScript regular expression, and
+# empty, `*` or absent fires on every tool [hooks.md "Matcher patterns", fetched 2026-10-27].
+_EXACT_MATCHER = re.compile(r"[A-Za-z0-9_\- ,|]*")
+
+
+def _fires_on_bash(matcher):
+    """Whether a hook group's matcher fires on the Bash tool; True whenever it cannot be told.
+
+    Python's `re.search` stands in for JavaScript's unanchored `RegExp.test`; the two agree
+    on the patterns matchers use, and a pattern Python cannot compile is assumed to fire.
+    """
+    if matcher is None or matcher in ("", "*"):
+        return True
+    if not isinstance(matcher, str):
+        return True
+    if _EXACT_MATCHER.fullmatch(matcher):
+        return "Bash" in {name.strip() for name in re.split(r"[|,]", matcher)}
+    try:
+        return re.search(matcher, "Bash") is not None
+    except re.error:
+        return True
+
+
+def permission_request_hooks(settings_path):
+    """The matchers of the settings file's PermissionRequest hooks that fire on Bash; [] when
+    it holds none or is missing, None when it cannot be read as settings.
+
+    A PermissionRequest hook that returns allow answers the prompt the gate's ask rule
+    raises, in every mode that asks and in `claude -p`, where it stands in for MC [hooks.md
+    PermissionRequest; permission-modes.md L924]. So one that fires on Bash can approve an
+    --apply MC never sees. Deny rules still beat it. Only this file is read: project
+    settings, `--settings` and plugins can carry such hooks too, and are not this CLI's to
+    find. A missing matcher is reported as "", the spelling that also fires on every tool.
+    """
+    data = _read(settings_path)
+    if data is None:
+        return [] if not os.path.lexists(settings_path) else None
+    try:
+        doc = parse_strict(data)
+    except ValueError:
+        return None
+    hooks = doc.get("hooks", {}) if isinstance(doc, dict) else None
+    groups = hooks.get("PermissionRequest", []) if isinstance(hooks, dict) else None
+    if not isinstance(groups, list) or not all(isinstance(group, dict) for group in groups):
+        return None
+    return [str(group.get("matcher", "")) for group in groups
+            if _fires_on_bash(group.get("matcher"))]

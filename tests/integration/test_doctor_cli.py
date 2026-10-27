@@ -515,3 +515,29 @@ def test_a_write_secret_left_by_an_interrupted_set_is_reported_and_l2_never_clai
     assert "tailnet credentials forget write" in found["L4"]["finding"]
     assert "L2 holds" not in found["L9"]["finding"]
     assert "L2 does not hold" in found["L9"]["finding"]
+
+
+def test_doctor_names_a_permission_request_hook_that_can_answer_the_gate_prompt(cli, tailnet,
+                                                                                ready):
+    # Such a hook's allow answers the --apply prompt in every mode that asks and in -p
+    # [hooks.md PermissionRequest], so the standing posture's "every --apply asks you" fails.
+    env = envelope(cli("--json", "doctor"))
+    quiet = checks_of(env)["L9"]
+    assert quiet["status"] == "INFO"
+    [note] = [n for n in quiet["evidence"]["notes"] if "fires on Bash" in n]
+    assert "holds none" in note and "plugins are not checked" in note
+    # The -p note no longer says a headless run always denies the write.
+    [headless] = [n for n in quiet["evidence"]["notes"] if "claude -p" in n and n != note]
+    assert "unless a PermissionRequest hook" in headless
+    settings = ready.claude_settings
+    doc = json.loads(settings.read_text())
+    doc["hooks"] = {"PermissionRequest": [{"matcher": "Bash", "hooks": [
+        {"type": "command", "command": "/usr/local/bin/approve-known-safe"}]}]}
+    settings.write_text(json.dumps(doc))
+    result = cli("--json", "doctor")
+    found = checks_of(envelope(result))["L9"]
+    assert found["status"] == "WARN"
+    assert "PermissionRequest" in found["finding"] and str(settings) in found["finding"]
+    assert '"Bash"' in found["finding"] and "answer the --apply prompt" in found["finding"]
+    # A lever that does not hold is a finding to report, never a doctor failure.
+    assert result.returncode == 0, result.stdout
