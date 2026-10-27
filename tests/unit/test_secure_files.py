@@ -117,6 +117,57 @@ def test_a_file_owned_by_another_uid_is_refused():
         "it is a symlink")
 
 
+def as_another_uid(monkeypatch):
+    """Have secure_files see an euid that owns nothing here, so real files read as another's.
+
+    The checks compare each owner with os.geteuid() at the moment of the call, so this arranges
+    a file and a directory owned by someone else without a second account or root.
+    """
+    monkeypatch.setattr(secure_files.os, "geteuid", lambda: EUID + 1)
+
+
+def test_a_file_and_directory_owned_by_another_uid_are_refused_on_read(tmp_path, monkeypatch):
+    # The pure check proves the rule; this proves the open path judges the file and its directory
+    # against the caller's euid, not against the owner it is looking at (§8.2 items 3 and 6).
+    directory = tmp_path / "config"
+    directory.mkdir(mode=0o700)
+    path = private_file(directory)
+    assert secure_files.check_parent(path, EUID + 1) == [
+        f"its directory {directory} is owned by uid {EUID}, not you"]
+    as_another_uid(monkeypatch)
+    exc = refused(path)
+    assert exc.code == "CREDENTIAL_UNSAFE"
+    assert exc.message == (f"refusing to read {path}: owned by uid {EUID}, not you; "
+                           f"its directory {directory} is owned by uid {EUID}, not you")
+
+
+def test_an_atomic_write_refuses_a_directory_owned_by_another_uid(tmp_path, monkeypatch):
+    # Whoever owns the directory can swap the file after it lands, so nothing is written there.
+    path = private_file(tmp_path, name="read.secret", content=b"old")
+    as_another_uid(monkeypatch)
+    with pytest.raises(errors.LocalError) as caught:
+        secure_files.write_private_atomic(path, b"new")
+    assert caught.value.code == "CREDENTIAL_UNSAFE"
+    assert f"its directory {tmp_path} is owned by uid {EUID}, not you" in caught.value.message
+    assert path.read_bytes() == b"old"
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["read.secret"]
+
+
+@pytest.mark.parametrize("call", [
+    lambda log: secure_files.append_locked(log, b"{}\n"),
+    lambda log: secure_files.check_appendable(log),
+], ids=["append_locked", "check_appendable"])
+def test_a_log_owned_by_another_uid_is_refused_and_left_as_it_was(tmp_path, monkeypatch, call):
+    # A log another account owns could be swapped or read back with planted lines (A11).
+    log = private_file(tmp_path, name="audit.jsonl", content=b"keep\n")
+    as_another_uid(monkeypatch)
+    with pytest.raises(errors.LocalError) as caught:
+        call(log)
+    assert caught.value.code == "AUDIT_UNWRITABLE"
+    assert caught.value.message == f"refusing to append to {log}: owned by uid {EUID}, not you"
+    assert log.read_bytes() == b"keep\n"
+
+
 def test_a_group_writable_parent_directory_is_refused(tmp_path):
     directory = tmp_path / "config"
     directory.mkdir()

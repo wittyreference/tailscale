@@ -39,8 +39,9 @@ _DEFERRED = {signal.SIGHUP, signal.SIGTERM, signal.SIGINT}
 def check_private_stat(st, euid):
     """List why a file with this stat result may not hold a secret; empty means it may.
 
-    Pure, so every rule is testable over a constructed stat result, including ownership by
-    another account, which a test cannot arrange for real without root.
+    Pure, so every rule is testable over a constructed stat result. Its callers compare
+    the owner with os.geteuid() at the time of the call, which is how their own tests make
+    a real file and directory read as another account's, without a second account or root.
     """
     problems = []
     if stat.S_ISLNK(st.st_mode):
