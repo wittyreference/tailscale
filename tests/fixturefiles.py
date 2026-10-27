@@ -1,0 +1,29 @@
+# ABOUTME: Loads the JSON fixtures under tests/fixtures: spec-example API bodies and MC-shaped scenarios.
+# ABOUTME: Each file names its source in "_source"; the loopback seam strips that key before serving it.
+
+import json
+from pathlib import Path
+
+FIXTURES = Path(__file__).resolve().parent / "fixtures"
+
+
+def raw_text(kind, name):
+    """A fixture file's text exactly as written, for parsers that must cope with its formatting."""
+    return (FIXTURES / kind / f"{name}.json").read_text(encoding="utf-8")
+
+
+def load(kind, name):
+    """A fixture's parsed JSON, freshly read so a test may change its copy: kind is the directory."""
+    return json.loads(raw_text(kind, name))
+
+
+def body(kind, name):
+    """A fixture as the API would send it: the same object without its "_source" label."""
+    doc = load(kind, name)
+    doc.pop("_source", None)
+    return doc
+
+
+def raw_bytes(kind, filename):
+    """A fixture file's bytes, whatever its type: HuJSON is served exactly as written, never parsed."""
+    return (FIXTURES / kind / filename).read_bytes()

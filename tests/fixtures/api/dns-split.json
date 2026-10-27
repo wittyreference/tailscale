@@ -1,0 +1,5 @@
+{
+  "_source": "spec 5637-5653: SplitDns, its example map of domain to nameservers",
+  "example.com": ["1.1.1.1", "1.2.3.4"],
+  "other.com": ["2.2.2.2"]
+}

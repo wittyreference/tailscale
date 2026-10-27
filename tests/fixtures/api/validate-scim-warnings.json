@@ -1,0 +1,10 @@
+{
+  "_source": "spec 2668-2675: POST /tailnet/{tailnet}/acl/validate's 200 example validateSCIMGroupsNotSynced, warnings only",
+  "message": "warning(s) found",
+  "data": [
+    {
+      "user": "group:unknown@example.com",
+      "warnings": ["group is not syncing from SCIM and will be ignored by rules in the policy file"]
+    }
+  ]
+}

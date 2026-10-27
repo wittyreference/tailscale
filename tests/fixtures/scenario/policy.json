@@ -1,0 +1,19 @@
+{
+  "_source": "synthetic, in the JSON form of a policy file [spec 6742]: MC-shaped tagOwners and rules for the write tests. tag:fleet owns itself, tag:lab and tag:ci, so a write client tagged tag:fleet may assign those (TAGS L324); tag:dev is owned by admins only. Tags and rules are made up",
+  "tagOwners": {
+    "tag:fleet": ["autogroup:admin", "tag:fleet"],
+    "tag:lab": ["tag:fleet"],
+    "tag:ci": ["autogroup:admin", "tag:fleet"],
+    "tag:dev": ["autogroup:admin"]
+  },
+  "grants": [
+    {"src": ["autogroup:member"], "dst": ["tag:fleet"], "ip": ["*"]},
+    {"src": ["tag:dev"], "dst": ["tag:lab"], "ip": ["22"]}
+  ],
+  "ssh": [
+    {"action": "check", "src": ["autogroup:member"], "dst": ["tag:fleet"], "users": ["autogroup:nonroot"]}
+  ],
+  "tests": [
+    {"src": "tag:dev", "accept": ["tag:lab:22"]}
+  ]
+}

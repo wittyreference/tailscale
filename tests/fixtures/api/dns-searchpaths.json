@@ -1,0 +1,4 @@
+{
+  "_source": "spec 5623-5636: DnsSearchPaths, its searchPaths example",
+  "searchPaths": ["user1.example.com", "user2.example.com"]
+}

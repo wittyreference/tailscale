@@ -1,0 +1,75 @@
+{
+  "_source": "spec 4461-4822: the Device schema's per-field examples gathered into one object (postureStatus has no example and is left out); the examples are not one coherent device, e.g. connectedToControl true beside a lastSeen [spec 4543-4548]",
+  "addresses": [
+    "100.87.74.78",
+    "fd7a:115c:a1e0:ac82:4843:ca90:697d:c36e"
+  ],
+  "id": "92960230385",
+  "nodeId": "n292kg92CNTRL",
+  "user": "amelie@example.com",
+  "name": "pangolin.tailfe8c.ts.net",
+  "hostname": "pangolin",
+  "clientVersion": "v1.36.0",
+  "updateAvailable": false,
+  "os": "linux",
+  "created": "2022-12-01T05:23:30Z",
+  "connectedToControl": true,
+  "lastSeen": "2022-12-01T05:23:30Z",
+  "keyExpiryDisabled": false,
+  "expires": "2023-05-30T04:44:05Z",
+  "authorized": false,
+  "isExternal": false,
+  "multipleConnections": true,
+  "machineKey": "",
+  "nodeKey": "nodekey:01234567890abcdef",
+  "blocksIncomingConnections": false,
+  "enabledRoutes": [
+    "10.0.0.0/16",
+    "192.168.1.0/24"
+  ],
+  "advertisedRoutes": [
+    "10.0.0.0/16",
+    "192.168.1.0/24"
+  ],
+  "clientConnectivity": {
+    "endpoints": [
+      "199.9.14.201:59128",
+      "192.68.0.21:59128"
+    ],
+    "latency": {
+      "Dallas": {
+        "latencyMs": 60.463043
+      },
+      "New York City": {
+        "preferred": true,
+        "latencyMs": 31.323811
+      }
+    },
+    "mappingVariesByDestIP": false,
+    "clientSupports": {
+      "hairPinning": null,
+      "ipv6": false,
+      "pcp": false,
+      "pmp": false,
+      "udp": false,
+      "upnp": false
+    }
+  },
+  "tags": [
+    "tag:golink"
+  ],
+  "tailnetLockError": "",
+  "tailnetLockKey": "",
+  "sshEnabled": false,
+  "postureIdentity": {
+    "serialNumbers": [
+      "CP74LFQJXM"
+    ]
+  },
+  "isEphemeral": false,
+  "distro": {
+    "name": "ubuntu",
+    "version": "25.04",
+    "codeName": "Plucky Puffin"
+  }
+}

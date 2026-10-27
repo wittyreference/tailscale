@@ -1,0 +1,3 @@
+{
+  "_source": "spec 2676-2678: POST /tailnet/{tailnet}/acl/validate's 200 example testsOrValidationSuccess, an empty object; spec 2642 says an empty body also passes"
+}

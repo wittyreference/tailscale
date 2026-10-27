@@ -1,0 +1,85 @@
+{
+  "_source": "synthetic `tailscale status --json` for the droplet, with the real field names of ipnstate.Status and PeerStatus [ipnstate:43-50, 239-316] and the indented, spaced formatting the real binary prints [mc §5]; values match tests/fixtures/scenario/devices.json",
+  "Version": "1.102.3-t0000000000-g0000000000",
+  "TUN": true,
+  "BackendState": "Running",
+  "HaveNodeKey": true,
+  "AuthURL": "",
+  "TailscaleIPs": [
+    "100.64.0.10",
+    "fd7a:115c:a1e0::a"
+  ],
+  "Self": {
+    "ID": "nFactory1CNTRL",
+    "PublicKey": "nodekey:0000000000000000000000000000000000000000000000000000000000000001",
+    "HostName": "claude-factory",
+    "DNSName": "claude-factory.tail0000.ts.net.",
+    "OS": "linux",
+    "UserID": 1000001,
+    "TailscaleIPs": [
+      "100.64.0.10",
+      "fd7a:115c:a1e0::a"
+    ],
+    "Tags": [
+      "tag:dev"
+    ],
+    "Addrs": null,
+    "CurAddr": "",
+    "Relay": "nyc",
+    "PeerRelay": "",
+    "RxBytes": 0,
+    "TxBytes": 0,
+    "Created": "2026-10-01T00:00:00Z",
+    "LastWrite": "0001-01-01T00:00:00Z",
+    "LastSeen": "0001-01-01T00:00:00Z",
+    "LastHandshake": "0001-01-01T00:00:00Z",
+    "Online": true,
+    "ExitNode": false,
+    "ExitNodeOption": false,
+    "Active": false,
+    "PeerAPIURL": [
+      "http://100.64.0.10:51234"
+    ],
+    "InNetworkMap": true,
+    "InMagicSock": false,
+    "InEngine": false
+  },
+  "Health": [],
+  "MagicDNSSuffix": "tail0000.ts.net",
+  "CurrentTailnet": {
+    "Name": "mc@example.com",
+    "MagicDNSSuffix": "tail0000.ts.net",
+    "MagicDNSEnabled": true
+  },
+  "CertDomains": [
+    "claude-factory.tail0000.ts.net"
+  ],
+  "Peer": {
+    "nodekey:0000000000000000000000000000000000000000000000000000000000000002": {
+      "ID": "nSpec5x1CNTRL",
+      "PublicKey": "nodekey:0000000000000000000000000000000000000000000000000000000000000002",
+      "HostName": "spec5",
+      "DNSName": "spec5.tail0000.ts.net.",
+      "OS": "linux",
+      "UserID": 1000001,
+      "TailscaleIPs": [
+        "100.64.0.11",
+        "fd7a:115c:a1e0::b"
+      ],
+      "Tags": [
+        "tag:fleet"
+      ],
+      "Online": true,
+      "ExitNode": false,
+      "ExitNodeOption": false,
+      "Active": false
+    }
+  },
+  "User": {
+    "1000001": {
+      "ID": 1000001,
+      "LoginName": "mc@example.com",
+      "DisplayName": "MC"
+    }
+  }
+}

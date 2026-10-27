@@ -1,0 +1,6 @@
+{
+  "_source": "spec 6742-6756: ExampleJSONPolicyFile, the policy file as GET /tailnet/{tailnet}/acl serves it with Accept: application/json [spec 2244-2251]",
+  "acls": [{"action": "accept", "ports": ["*:*"], "users": ["*"]}],
+  "groups": {"group:example": ["user1@example.com", "user2@example.com"]},
+  "hosts": {"example-host-1": "100.100.100.100"}
+}

@@ -1,0 +1,18 @@
+{
+  "v": 1,
+  "gate": "Bash(*tailnet*--apply*)",
+  "ask": [
+    "Bash(*tailnet*--apply*)",
+    "Bash(*api.tailscale.com*)",
+    "WebFetch(domain:api.tailscale.com)",
+    "Edit(~/.claude/settings.json)",
+    "Bash(*.claude/settings.json*)",
+    "Bash(*install-tailnet*)"
+  ],
+  "deny": [
+    "Read(~/.config/tailnet/**)",
+    "Edit(~/.config/tailnet/**)",
+    "Bash(*.config/tailnet*)",
+    "Edit(~/.local/state/tailnet/audit.jsonl)"
+  ]
+}

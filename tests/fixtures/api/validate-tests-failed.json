@@ -1,0 +1,10 @@
+{
+  "_source": "spec 2660-2667: POST /tailnet/{tailnet}/acl/validate's 200 example testsOrValidationFailed. A failed test is still HTTP 200 (critic R2)",
+  "message": "test(s) failed",
+  "data": [
+    {
+      "user": "user1@example.com",
+      "errors": ["address \"2.2.2.2:22\": want: Drop, got: Accept"]
+    }
+  ]
+}
