@@ -30,6 +30,9 @@ def make_repo(tmp_path, email):
            "GIT_CONFIG_GLOBAL": "/dev/null", "GIT_CONFIG_SYSTEM": "/dev/null"}
     if email is not None:
         subprocess.run(["git", "-C", str(tmp_path), "config", "user.email", email], check=True, env=env)
+        # The hook asks git for the full identity, which needs a name; without one git falls
+        # back to the account's passwd entry, which may be empty on the machine running this.
+        subprocess.run(["git", "-C", str(tmp_path), "config", "user.name", "t"], check=True, env=env)
     return env
 
 
@@ -85,6 +88,57 @@ def test_a_twilio_identity_is_refused_in_any_case_or_subdomain(tmp_path, email):
     result = run_hook(tmp_path, email)
     assert result.returncode == 1
     assert "work identity" in result.stderr
+
+
+def commit_through_hook(tmp_path, env, *flags, config=()):
+    """Run a real `git commit` with the hook armed, as MC's clone runs it.
+
+    Git settles the commit's author and committer from --author, the GIT_*_EMAIL variables
+    and the author.email and committer.email keys before user.email, and hands that identity
+    to the hook; only a real commit exercises it.
+    """
+    stage(tmp_path, env, {"a.txt": "a\n"})
+    settings = ["-c", f"core.hooksPath={HOOK.parent}", "-c", "user.name=t"]
+    for item in config:
+        settings += ["-c", item]
+    return subprocess.run(["git", "-C", str(tmp_path), *settings, "commit", "-q", "-m", "x",
+                           *flags], env=env, capture_output=True, text=True, check=False)
+
+
+@pytest.mark.parametrize("flags,variables,config", [
+    (["--author=MC <mc@twilio.com>"], {}, ()),
+    ([], {"GIT_AUTHOR_EMAIL": "mc@twilio.com"}, ()),
+    ([], {"GIT_COMMITTER_EMAIL": "mc@corp.twilio.com"}, ()),
+    ([], {}, ("author.email=MC@Twilio.com",)),
+    ([], {}, ("committer.email=mc@twilio.com",)),
+], ids=["author-flag", "author-variable", "committer-variable", "author-key", "committer-key"])
+def test_a_twilio_identity_the_commit_is_made_with_is_refused(tmp_path, flags, variables, config):
+    # user.email is the personal address in every case; the identity git stamps is not.
+    env = make_repo(tmp_path, PERSONAL)
+    result = commit_through_hook(tmp_path, {**env, **variables}, *flags, config=config)
+    assert result.returncode != 0, "the commit was made"
+    assert "work identity" in result.stderr
+    log = subprocess.run(["git", "-C", str(tmp_path), "log", "--oneline"], env=env,
+                         capture_output=True, text=True, check=False)
+    assert log.stdout == ""
+
+
+def test_a_commit_as_the_personal_identity_goes_through_the_armed_hook(tmp_path):
+    env = make_repo(tmp_path, PERSONAL)
+    result = commit_through_hook(tmp_path, env)
+    assert result.returncode == 0, result.stderr
+
+
+def test_the_hook_refuses_twilio_only_so_another_address_passes(tmp_path):
+    # CLAUDE.md says what the hook enforces: an unset identity and twilio.com are refused, in
+    # the author and the committer; it does not pin mc8805, so another address passes (A72).
+    result = run_hook(tmp_path, "someone-else@example.com")
+    assert result.returncode == 0, result.stderr
+    claude_md = (REPO / "CLAUDE.md").read_text(encoding="utf-8")
+    [row] = [line for line in claude_md.splitlines() if line.startswith("| Commit identity |")]
+    assert "refuses anything else" not in row
+    for words in ("twilio.com", "author", "committer", "unset"):
+        assert words in row, words
 
 
 def test_a_staged_oauth_client_secret_is_refused(tmp_path):

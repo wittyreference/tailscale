@@ -1187,6 +1187,21 @@ what MC is prompted for, so they wait for MC's decision. [cli] is
 https://tailscale.com/docs/reference/tailscale-cli, last validated Jul 30, 2026, fetched
 2026-10-27.
 
+**A72. (review, 2026-10-26) findings 8 and 44:** §21.6 kept the hook's identity check, which read
+`git config user.email` alone and refused it when empty or at twilio.com, while CLAUDE.md said the
+hook "refuses anything else" than `wittyreference <mc8805@outlook.com>`; git stamps a commit with
+the identity it settles from `--author`, `GIT_AUTHOR_EMAIL` and `GIT_COMMITTER_EMAIL` and the
+`author.email` and `committer.email` keys before `user.email`, so a work-profile variable or key
+committed as the work address through a hook that passed, and any third address passed too. The
+hook now also reads both identities with `git var GIT_AUTHOR_IDENT` and `GIT_COMMITTER_IDENT`,
+which git hands it already settled, and refuses one it cannot state, one with no address, or a
+twilio.com address (any case, any subdomain), keeping the empty-`user.email` refusal first; tests
+drive real commits with each override; and CLAUDE.md's row now says what the hook enforces and that
+it does not pin mc8805; because an author line is baked into history and only a rewrite takes it
+out, and an agent that believed the allow-list would trust a check that was never made. Pinning
+mc8805 instead would refuse MC's other personal identities in every session that commits here, so
+it waits for MC's decision.
+
 ---
 
 ## 0. The design on one page

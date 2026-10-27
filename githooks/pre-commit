@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# ABOUTME: Pre-commit guard: refuses no identity or a Twilio work identity, and any staged Tailscale key.
+# ABOUTME: Pre-commit guard: refuses no identity or a Twilio author or committer, and any staged Tailscale key.
 # ABOUTME: Fails closed, like the write guard in the CLI: a missing answer blocks, it never passes.
 
 set -euo pipefail
@@ -25,6 +25,32 @@ if [[ "$email" == *"@$FORBIDDEN_DOMAIN" || "$email" == *".$FORBIDDEN_DOMAIN" ]];
     echo "           git config user.email '$SUGGESTED'" >&2
     exit 1
 fi
+
+# user.email is not what the commit is stamped with: --author, GIT_AUTHOR_EMAIL and
+# GIT_COMMITTER_EMAIL, and the author.email and committer.email keys all come before it,
+# and git hands the identity it settled to this hook. So both identities are read the way
+# git reads them, and one git cannot state, or one without an address, blocks (A72).
+for role in author committer; do
+    if [ "$role" = author ]; then variable=GIT_AUTHOR_IDENT; else variable=GIT_COMMITTER_IDENT; fi
+    if ! ident="$(git var "$variable" 2>/dev/null)"; then
+        echo "tailscale: refusing to commit: git cannot say who the $role is." >&2
+        exit 1
+    fi
+    # An ident line is `Name <address> time zone`; git strips < and > from both parts.
+    address="${ident#*<}"
+    address="${address%%>*}"
+    if [[ "$ident" != *"<"*">"* || -z "$address" ]]; then
+        echo "tailscale: refusing to commit with no $role address." >&2
+        exit 1
+    fi
+    if [[ "$address" == *"@$FORBIDDEN_DOMAIN" || "$address" == *".$FORBIDDEN_DOMAIN" ]]; then
+        echo "tailscale: refusing to commit with <$address> as the $role." >&2
+        echo "           $FORBIDDEN_DOMAIN is a work identity; this repo is personal." >&2
+        echo "           Drop --author, GIT_AUTHOR_EMAIL, GIT_COMMITTER_EMAIL, author.email and" >&2
+        echo "           committer.email, or set them to '$SUGGESTED'." >&2
+        exit 1
+    fi
+done
 
 # A Tailscale key in history is a key published: removing it takes a history rewrite,
 # and only revoking it in the console makes it safe again. So scan what this commit

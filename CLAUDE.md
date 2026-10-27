@@ -18,7 +18,7 @@ the module you are touching. The evidence behind every load-bearing choice is in
 | | |
 |---|---|
 | Repo | `github.com/wittyreference/tailscale` (private) |
-| Commit identity | `wittyreference <mc8805@outlook.com>`; `githooks/pre-commit` refuses anything else |
+| Commit identity | `wittyreference <mc8805@outlook.com>`. `githooks/pre-commit` refuses an unset `user.email` and a twilio.com address as the commit's author or committer, however set (`--author`, `GIT_*_EMAIL`, `author.email`, `committer.email`); it does not pin mc8805, so commit as it yourself |
 | Hooks | `git config core.hooksPath githooks` after every clone (repo-local config does not survive one) |
 | Merges | `--squash` only. A GitHub-side merge commit is built on GitHub's servers and stamps the account's primary address, which is MC's work identity |
 | Runs on | the droplet `claude-factory` only (Ubuntu, Python ≥ 3.10) |
