@@ -7,6 +7,11 @@ PY := $(VENV)/bin/python
 
 .PHONY: venv test e2e install-dry-run
 
+# The venv's python is the only file target, and the venv is made before pip installs into it,
+# so a failed install (offline, say) would leave a python make reads as up to date, and every
+# later `make test` would stop on a missing pytest. On a failed recipe make deletes the target.
+.DELETE_ON_ERROR:
+
 # pytest and ruff are development-only; the CLI itself imports nothing outside the
 # stdlib (DESIGN.md §3.1). Pinned so the 3.10 floor and the droplet run the same tools.
 venv: $(PY)

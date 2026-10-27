@@ -275,10 +275,42 @@ def test_the_e2e_suite_collects_exactly_e1_to_e17_in_order(tmp_path):
     assert collected == E_TESTS
 
 
+# `make e2e` depends on the venv's python, so in a checkout with no `.venv` make would build one,
+# fetching pytest and ruff from PyPI, inside a suite that stays on loopback (§21.1) and that netguard
+# cannot see past make's children. A variable on make's command line wins over the Makefile's, so
+# PY set to the interpreter already running the suite names a prerequisite that exists.
+MAKE_E2E = ["make", "-s", "-C", str(REPO), "e2e", f"PY={sys.executable}"]
+
+
+def test_running_make_e2e_from_the_suite_never_builds_a_venv(tmp_path):
+    # A venv directory that does not exist stands in for a fresh clone with no `.venv`; -n prints
+    # what make would run and runs none of it.
+    done = subprocess.run([*MAKE_E2E, "-n", f"VENV={tmp_path / 'absent'}"], capture_output=True,
+                          text=True, timeout=60, check=False)
+    assert done.returncode == 0, done.stderr
+    assert "-m pytest tests/e2e" in done.stdout
+    assert "-m venv" not in done.stdout and "pip install" not in done.stdout
+
+
+def test_a_venv_build_whose_install_fails_leaves_no_python_for_make_to_trust(tmp_path):
+    # A pip with no index stands in for an offline droplet: the venv is made from the standard
+    # library, then the install of pytest and ruff fails. The venv's python is the target make
+    # judges by, so one left behind would read as up to date, and every later `make test` or
+    # `make e2e` would stop on "No module named pytest" until someone deleted `.venv` by hand.
+    venv = tmp_path / "venv"
+    env = {**os.environ, "PIP_NO_INDEX": "1", "PIP_DISABLE_PIP_VERSION_CHECK": "1"}
+    done = subprocess.run(["make", "-s", "-C", str(REPO), "venv", f"VENV={venv}",
+                           f"PYTHON={sys.executable}"], capture_output=True, text=True, env=env,
+                          timeout=300, check=False)
+    assert done.returncode != 0
+    assert "No matching distribution found for pytest" in done.stderr
+    assert not os.path.lexists(venv / "bin" / "python")
+
+
 def test_make_e2e_fails_loudly_with_exit_3_and_never_skips(tmp_path):
     env = {**os.environ, **child_env(tmp_path)}
-    done = subprocess.run(["make", "-s", "-C", str(REPO), "e2e"], capture_output=True, text=True,
-                          env=env, timeout=300, check=False)
+    done = subprocess.run(MAKE_E2E, capture_output=True, text=True, env=env, timeout=300,
+                          check=False)
     said = done.stdout + done.stderr
     assert done.returncode != 0
     assert "Error 3" in said
