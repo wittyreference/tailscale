@@ -190,6 +190,21 @@ def test_atomic_write_leaves_no_partial_file_on_error(tmp_path):
     assert sorted(p.name for p in tmp_path.iterdir()) == ["read.json", "read.secret"]
 
 
+def test_an_atomic_write_told_not_to_replace_leaves_an_existing_file_alone(tmp_path):
+    # `policy get --out` must never replace a file (A68): the whole file still lands at once,
+    # but by a link that fails when the name is taken, so a file made after any check survives.
+    path = private_file(tmp_path, name="authorized_keys", content=b"ssh-ed25519 AAAA mc\n")
+    with pytest.raises(FileExistsError):
+        secure_files.write_private_atomic(path, b"// policy\n", replace=False)
+    assert path.read_bytes() == b"ssh-ed25519 AAAA mc\n"
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["authorized_keys"]
+    fresh = tmp_path / "policy.hujson"
+    secure_files.write_private_atomic(fresh, b"// policy\n", replace=False)
+    assert fresh.read_bytes() == b"// policy\n" and stat.S_IMODE(fresh.stat().st_mode) == 0o600
+    assert fresh.stat().st_nlink == 1
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["authorized_keys", "policy.hujson"]
+
+
 def test_atomic_write_refuses_a_directory_others_can_write(tmp_path):
     directory = tmp_path / "config"
     directory.mkdir(mode=0o700)

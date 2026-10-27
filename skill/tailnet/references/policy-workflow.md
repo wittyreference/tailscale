@@ -46,9 +46,9 @@ Tags: **[unverified]** and **[inference]**. Keys resolve in [Sources](#11-source
 
 | Command | Exit codes (DESIGN §5.2) |
 |---|---|
-| `tailnet policy get [--format hujson\|json] [--out FILE]` | 0 / 3 / 4. Bytes go to stdout as served, through the redactor, which changes only secret-shaped text (DESIGN A28); the ETag, sha256 and `measured_at` go to stderr |
+| `tailnet policy get [--format hujson\|json] [--out FILE]` | 0 / 2 / 3 / 4. Bytes go to stdout as served, through the redactor, which changes only secret-shaped text (DESIGN A28); the ETag, sha256 and `measured_at` go to stderr. `--out` makes a new 0600 file: it refuses (exit 2) a file that exists or a hidden path such as `~/.ssh` (DESIGN A68) |
 | `tailnet policy draft [--name NAME]` | 0 / 3 / 4 |
-| `tailnet policy validate TARGET` (a draft directory or a file) | 0 pass, with or without warnings / 8 fail / 2 array-shaped file / 3 / 4 |
+| `tailnet policy validate TARGET` (a draft directory, or a `.hujson` or `.json` file outside hidden paths and the CLI's own directories, DESIGN A68) | 0 pass, with or without warnings / 8 fail / 2 array-shaped file or a TARGET it will not send / 3 / 4 |
 | `tailnet policy diff DRAFT` | 0 READY / 8 NOT READY / 3 / 4 |
 | `tailnet policy test --src SRC (--accept HOST:PORT)... (--deny HOST:PORT)... [--proto PROTO]` | 0 pass / 8 fail / 2 / 3 / 4 |
 

@@ -152,8 +152,34 @@ def test_policy_get_out_writes_the_bytes_0600_and_says_where(cli, live, configur
     assert re.match(rf"OK: the live policy as HuJSON, \d+ lines, written to {re.escape(str(out))}"
                     rf" \(as of {TIME}\)\n", result.stdout)
     assert f"sha256: {sha256(live.hujson)}" in result.stdout
-    data = envelope(cli("--json", "policy", "get", "--out", str(out)))["data"]
-    assert (data["out"], data["text"]) == (str(out), None)
+    second = work / "policy-2.hujson"
+    data = envelope(cli("--json", "policy", "get", "--out", str(second)))["data"]
+    assert (data["out"], data["text"]) == (str(second), None)
+
+
+def test_policy_get_out_never_replaces_a_file_nor_writes_into_a_hidden_path(cli, live, loopback,
+                                                                            configured, tmp_path):
+    # The skill pre-approves `tailnet policy *` (§19.2), so an --out of an existing file, such
+    # as ~/.ssh/authorized_keys, or a new one in a dot-directory, such as ~/.bash_profile,
+    # would land without a prompt; both are refused before the fetch (A68).
+    work = tmp_path / "work"
+    work.mkdir(mode=0o700)
+    keys = work / "authorized_keys"
+    keys.write_text("ssh-ed25519 AAAA mc\n")
+    hidden = work / ".ssh"
+    hidden.mkdir(mode=0o700)
+    linked = work / "link.hujson"
+    linked.symlink_to(keys)
+    for target, words in ((keys, "already exists"), (linked, "already exists"),
+                          (hidden / "rc", "hidden"), (work / ".bash_profile", "hidden")):
+        result = cli("--json", "policy", "get", "--out", str(target))
+        env = envelope(result)
+        assert (result.returncode, env["error"]["code"]) == (2, "USAGE"), target
+        assert words in env["error"]["message"], env["error"]["message"]
+    assert keys.read_text() == "ssh-ed25519 AAAA mc\n"
+    assert sorted(p.name for p in work.iterdir()) == [".ssh", "authorized_keys", "link.hujson"]
+    assert list(hidden.iterdir()) == []
+    assert loopback.requests == []
 
 
 def test_policy_get_out_refuses_the_cli_s_own_directories_before_any_request(cli, live, loopback,
@@ -370,6 +396,36 @@ def test_validate_and_diff_refuse_what_is_not_theirs_to_send_or_record(cli, live
         assert secret.read_text().strip() not in result.stdout + result.stderr
     assert len(loopback.requests) == before
     assert not (elsewhere / "meta.json").read_text().count("validated")
+
+
+def test_validate_sends_a_file_only_when_it_is_a_policy_file_outside_hidden_paths(cli, live,
+                                                                                loopback,
+                                                                                configured,
+                                                                                tmp_path):
+    # validate is pre-approved with the rest of `tailnet policy *` (§19.2), so a file TARGET
+    # is an upload no prompt stands in front of; a key or a dot-directory's file never goes
+    # (A68). A draft goes by its directory.
+    plain = tmp_path / "plain"
+    plain.mkdir()
+    key = plain / "id_ed25519"
+    key.write_text("-----BEGIN OPENSSH PRIVATE KEY-----\n")
+    hidden = tmp_path / ".aws"
+    hidden.mkdir()
+    (hidden / "credentials.json").write_bytes(live.hujson)
+    (plain / ".env.json").write_bytes(live.hujson)
+    path = draft(cli)
+    before = len(loopback.requests)
+    for target, words in ((key, ".hujson or .json"), (hidden / "credentials.json", "hidden"),
+                          (plain / ".env.json", "hidden"),
+                          (path / "candidate.hujson", "by its directory")):
+        result = cli("--json", "policy", "validate", str(target))
+        env = envelope(result)
+        assert (result.returncode, env["error"]["code"]) == (2, "USAGE"), target
+        assert words in env["error"]["message"], env["error"]["message"]
+        assert "BEGIN OPENSSH" not in result.stdout + result.stderr
+    assert len(loopback.requests) == before
+    assert "policy validate" in envelope(
+        cli("--json", "policy", "validate", str(path / "candidate.hujson")))["error"]["message"]
 
 
 def test_diff_is_ready_only_after_validate_and_with_an_unmoved_live_policy(cli, live, configured):

@@ -121,9 +121,11 @@ on prose. A write without `--apply` is a dry run that changes nothing.
 - `tailnet device tag DEVICE (--add TAG | --remove TAG)... [--confirm TOKEN] [--apply --reason TEXT]`
 - `tailnet device disable-key-expiry DEVICE... [--confirm TOKEN] [--apply --reason TEXT]`: several
   devices only when every one is tagged.
-- `tailnet policy get [--format hujson|json] [--out FILE]`: the live policy as served.
+- `tailnet policy get [--format hujson|json] [--out FILE]`: the live policy as served; `--out`
+  makes a new file outside hidden paths and never replaces one.
 - `tailnet policy draft [--name NAME]`: a new draft directory; `data.path` names it.
-- `tailnet policy validate TARGET`: the server parses the draft and runs its own tests.
+- `tailnet policy validate TARGET`: the server parses the draft and runs its own tests; a file
+  TARGET must be `.hujson` or `.json`, outside hidden paths.
 - `tailnet policy diff DRAFT`: base → candidate, a drift check, then READY or NOT READY.
 - `tailnet policy test --src SRC (--accept HOST:PORT)... (--deny HOST:PORT)... [--proto PROTO]`:
   against the live policy; `--proto tcp` for SSH questions; a source is an identity, never an IP.

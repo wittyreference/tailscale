@@ -479,3 +479,14 @@ def test_the_levers_and_the_headless_rule_name_permission_request_hooks():
     start, end = section(credentials, "7. Postures: standing or session-scoped")
     for words in ("`PermissionRequest` hook", "allowManagedHooksOnly", "unless a hook"):
         assert words in credentials[start:end], words
+
+
+def test_the_pre_approved_policy_commands_say_what_they_will_not_write_or_send():
+    # A68: `Bash(tailnet policy *)` pre-approves `--out` and a file TARGET for the skill's turn,
+    # so the CLI fences both; the agent reads the fences where it reads the commands.
+    lines = {item.split("`")[1].split(" [")[0].split(" TARGET")[0]: item
+             for item in bullets(body()) if item.startswith("`tailnet policy ")}
+    assert "never replaces" in lines["tailnet policy get"]
+    assert "hidden paths" in lines["tailnet policy get"]
+    assert "`.hujson` or `.json`" in lines["tailnet policy validate"]
+    assert "Bash(tailnet policy *)" in frontmatter()["allowed-tools"]

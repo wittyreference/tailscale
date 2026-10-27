@@ -1110,6 +1110,27 @@ cannot tell whether a prompt was shown, so it says where the gate fails and look
 needs root and stops MC's own hooks too, and ask rules on edits to a project's
 `.claude/settings*.json` would change what MC is prompted for; both wait for MC's decision.
 
+**A68. (review, 2026-10-26) finding 29:** §19.2 justified `Bash(tailnet policy *)` in the skill's
+`allowed-tools` with "`allowed-tools` lists reads only", which holds for API requests and not for
+local effects: Claude Code matches the command text and cannot see a file named in an argument
+[PERM L252-260, L356], so in Manual mode, during a `/tailnet` turn, `policy get --out
+~/.ssh/authorized_keys` replaced MC's keys with policy text, and `policy validate
+~/.ssh/id_ed25519` sent the key to the API, each with no prompt; A28 and A29 fenced only the
+CLI's own directories. It was changed so that (1) `--out` refuses, as `USAGE` before the fetch, a
+path that exists (a symlink included) or whose resolved path has a component starting with `.`,
+and writes through `write_private_atomic(…, replace=False)`, which
+hard-links the synced temp file to the name and so refuses one that appeared meanwhile; and (2) a
+file TARGET of `policy validate` is refused, `USAGE` before any request, inside the state
+directory (a draft goes by its directory, where its verdict is recorded), under a hidden
+component, or without a `.hujson` or `.json` suffix; because dot-directories and dotfiles are
+where a home keeps keys, tokens and start-up files (`~/.ssh`, `~/.config`, `~/.claude`,
+`~/.bash_profile`), and a policy is the only file either command has a reason to touch, while
+e2e E6 and E7 write new `.hujson` and `.json` files under pytest's plain temporary directory.
+"Reads only" in §19.2 now means no Tailscale write request, not no local side effect. The
+tighter routes, an ask rule `Bash(*tailnet*--out*)` or `allowed-tools` naming the policy
+commands one by one without `validate`, would change what MC is prompted for, so they wait for
+MC's decision.
+
 ---
 
 ## 0. The design on one page

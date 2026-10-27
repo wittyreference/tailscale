@@ -250,7 +250,7 @@ def remove_temp_leftovers(path):
     return removed
 
 
-def write_private_atomic(path, data, *, code="CREDENTIAL_UNSAFE"):
+def write_private_atomic(path, data, *, code="CREDENTIAL_UNSAFE", replace=True):
     """Replace `path` with `data` as a 0600 file, all at once (§8.5).
 
     Readers see the old file or the new one, never a half-written secret: the bytes go to
@@ -258,16 +258,20 @@ def write_private_atomic(path, data, *, code="CREDENTIAL_UNSAFE"):
     target. A directory others can write is refused first, because they could swap the
     file after it lands. On any error the temp file is removed and the error re-raised, and
     the signals that would end the process without that cleanup wait until it is done.
+
+    With `replace=False` the temp file is hard-linked to the name instead, which fails with
+    FileExistsError when anything holds it, so a file that appeared after the caller looked
+    is still never replaced (A68).
     """
     previous = signal.pthread_sigmask(signal.SIG_BLOCK, _DEFERRED)
     try:
-        _write_atomic(Path(path), data, code)
+        _write_atomic(Path(path), data, code, replace)
     finally:
         # A held signal is delivered here, once the file is whole under its own name.
         signal.pthread_sigmask(signal.SIG_SETMASK, previous)
 
 
-def _write_atomic(path, data, code):
+def _write_atomic(path, data, code, replace):
     """write_private_atomic's work, run while the ending signals are held back."""
     dir_fd = os.open(path.parent, _DIR_FLAGS)
     try:
@@ -285,7 +289,11 @@ def _write_atomic(path, data, code):
             os.fsync(fd)
             os.close(fd)
             fd = None
-            os.replace(temp, path.name, src_dir_fd=dir_fd, dst_dir_fd=dir_fd)
+            if replace:
+                os.replace(temp, path.name, src_dir_fd=dir_fd, dst_dir_fd=dir_fd)
+            else:
+                os.link(temp, path.name, src_dir_fd=dir_fd, dst_dir_fd=dir_fd)
+                os.unlink(temp, dir_fd=dir_fd)
         except BaseException:
             if fd is not None:
                 os.close(fd)

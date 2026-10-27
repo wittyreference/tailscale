@@ -420,18 +420,38 @@ def _inside(path, directory):
     return path == directory or directory in path.parents
 
 
+def _hidden_part(real):
+    """The first component of a resolved path that starts with a dot, or None.
+
+    Dot-directories and dotfiles are where a home keeps its keys, tokens and shell and tool
+    configuration (~/.ssh, ~/.config, ~/.claude, ~/.bash_profile). The skill pre-approves
+    every `tailnet policy` command (§19.2), so an --out or a validate TARGET there would
+    write or upload with no prompt in front of it (A68).
+    """
+    return next((part for part in real.parts[1:] if part.startswith(".")), None)
+
+
 def _out_path(posture, out):
     """Where --out may write, resolved and checked before anything is fetched.
 
     Never into the CLI's own directories, where the file could replace a credential or
     rewrite the audit log (invariant 6); never into a directory others can write, where the
-    0600 file could be swapped after it lands (§8.2 item 6).
+    0600 file could be swapped after it lands (§8.2 item 6); never over a file that exists,
+    nor into a hidden path, where it could replace or plant a key or a shell's start-up
+    file without a prompt (A68).
     """
     real = Path(os.path.realpath(out))
     for own in (posture.config_dir, posture.state_dir):
         if _inside(real, Path(os.path.realpath(own))):
             raise UsageError("USAGE", f"--out {out} is inside {own}, which holds the CLI's own "
                                       "files; write the policy somewhere else")
+    if os.path.lexists(out) or os.path.lexists(real):
+        raise UsageError("USAGE", f"--out {out} already exists, and policy get never replaces "
+                                  "a file: name a new one")
+    hidden = _hidden_part(real)
+    if hidden is not None:
+        raise UsageError("USAGE", f"--out {out} is in a hidden path ({hidden}), where keys "
+                                  "and start-up files live; write the policy somewhere plain")
     try:
         problems = secure_files.check_parent(real, os.geteuid())
     except OSError as exc:
@@ -443,9 +463,13 @@ def _out_path(posture, out):
 
 
 def _write_out(real, out, data):
-    """Write --out's bytes 0600 and atomically; a refusal is the argument's fault (exit 2)."""
+    """Write --out's bytes 0600 and atomically, never over a file that appeared since the
+    check (A68); a refusal is the argument's fault (exit 2)."""
     try:
-        secure_files.write_private_atomic(real, data)
+        secure_files.write_private_atomic(real, data, replace=False)
+    except FileExistsError:
+        raise UsageError("USAGE", f"--out {out} appeared while the policy was fetched, and "
+                                  "policy get never replaces a file: name a new one") from None
     except LocalError as exc:
         raise UsageError("USAGE", f"--out {out}: {exc.message}") from None
     except OSError as exc:
@@ -722,6 +746,20 @@ def run_validate(posture, args):
         if _inside(real, Path(os.path.realpath(posture.config_dir))):
             raise UsageError("USAGE", f"{target} is in {posture.config_dir}, which holds "
                                       "credentials; it is never sent")
+        # A draft's own files go by its directory, which is where the verdict is recorded.
+        if _inside(real, Path(os.path.realpath(posture.state_dir))):
+            raise UsageError("USAGE", f"{target} is in {posture.state_dir}; validate a draft by "
+                                      "its directory: tailnet policy validate DRAFT")
+        # Pre-approved, a file TARGET is an upload no prompt stands in front of, so only a
+        # policy-shaped name outside hidden paths is sent (A68).
+        hidden = _hidden_part(real)
+        if hidden is not None:
+            raise UsageError("USAGE", f"{target} is in a hidden path ({hidden}), where keys and "
+                                      "tokens live, so it is never sent; validate a draft by its "
+                                      "directory: tailnet policy validate DRAFT")
+        if real.suffix not in (".hujson", ".json"):
+            raise UsageError("USAGE", f"{target}: a file TARGET must be a .hujson or .json file; "
+                                      "anything else is never sent")
         body = _read(real, target)
     check_validate_body(body)
     response = api.validate_policy(api.session(posture), body, api.HUJSON)
