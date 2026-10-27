@@ -194,18 +194,56 @@ def test_only_api_and_tokens_issue_post_requests():
     from tailnet import tokens
     assert tokens.TOKEN_PATH == "/oauth/token"
     # And only the transport holds an HTTP client, so nothing can go around it.
-    clients = {"urllib.request", "http.client", "http"}
-    importers = set()
-    for path in modules:
-        for node in ast.walk(parsed(path)):
-            names = []
-            if isinstance(node, ast.Import):
-                names = [alias.name for alias in node.names]
-            elif isinstance(node, ast.ImportFrom) and node.level == 0:
-                names = [node.module]
-            if clients & set(names):
-                importers.add(path.name)
+    importers = {path.name for path in modules if holds_http_client(parsed(path))}
     assert importers == {"http.py"}
+    # The check itself sees each way in.
+    for source in ("import urllib.request", "import http.client as c", "from http import client",
+                   "from urllib.request import urlopen", "from urllib import request",
+                   "import urllib.parse\nurllib.request.urlopen(u)",
+                   "importlib.import_module('urllib.request')", "__import__('http.client')"):
+        assert holds_http_client(ast.parse(source)), source
+
+
+HTTP_CLIENTS = {"urllib.request", "http.client", "http"}
+
+
+def imports_dynamically(tree):
+    """Say whether a module imports by name at run time, which no static check can see through.
+
+    importlib.import_module and __import__ take the module as a string, so a module that uses
+    either could reach any client or process module; it counts as reaching all of them.
+    """
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import) and any(a.name.split(".")[0] == "importlib"
+                                                for a in node.names):
+            return True
+        if isinstance(node, ast.ImportFrom) and (node.module or "").split(".")[0] == "importlib":
+            return True
+        if isinstance(node, ast.Name) and node.id in ("__import__", "importlib", "import_module"):
+            return True
+        if isinstance(node, ast.Attribute) and node.attr == "import_module":
+            return True
+    return False
+
+
+def holds_http_client(tree):
+    """Say whether a module imports one of the standard library's HTTP clients."""
+    if imports_dynamically(tree):
+        return True
+    for node in ast.walk(tree):
+        names = []
+        if isinstance(node, ast.Import):
+            names = [alias.name for alias in node.names]
+        elif isinstance(node, ast.ImportFrom) and node.level == 0:
+            # `from urllib import request` names the client as the imported name, not the module.
+            names = [node.module] + [f"{node.module}.{a.name}" for a in node.names]
+        elif isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name):
+            # `import urllib.parse` binds `urllib`, through which `urllib.request` is reachable
+            # once anything else has imported it.
+            names = [f"{node.value.id}.{node.attr}"]
+        if HTTP_CLIENTS & set(names):
+            return True
+    return False
 
 
 # Every way the os module starts another program. A module that touches none of these and
@@ -213,19 +251,33 @@ def test_only_api_and_tokens_issue_post_requests():
 OS_PROCESS_CALLS = re.compile(r"(system|popen|exec\w*|spawn\w*|posix_spawnp?|fork\w*)")
 
 
+# Standard-library modules whose job includes starting another program: subprocess itself,
+# pty.spawn, asyncio's create_subprocess_*, multiprocessing and concurrent.futures' process
+# pools, and posix, which is os's implementation under another name.
+PROCESS_MODULES = {"subprocess", "pty", "asyncio", "multiprocessing", "posix"}
+
+
 def starts_programs(tree):
     """Say whether a module imports subprocess or reaches an os function that starts a program."""
+    if imports_dynamically(tree):
+        return True
     for node in ast.walk(tree):
-        if isinstance(node, ast.Import) and any(a.name.split(".")[0] == "subprocess"
-                                                for a in node.names):
+        if isinstance(node, ast.Import) and any(
+                a.name.split(".")[0] in PROCESS_MODULES or a.name == "concurrent.futures"
+                for a in node.names):
             return True
-        if isinstance(node, ast.ImportFrom) and node.level == 0 and node.module == "subprocess":
-            return True
-        if isinstance(node, ast.ImportFrom) and node.module == "os" and any(
-                OS_PROCESS_CALLS.fullmatch(a.name) for a in node.names):
-            return True
+        if isinstance(node, ast.ImportFrom) and node.level == 0:
+            module = node.module or ""
+            if module.split(".")[0] in PROCESS_MODULES or module == "concurrent.futures":
+                return True
+            if module == "concurrent" and any(a.name == "futures" for a in node.names):
+                return True
+            # `from os import *` binds every os process call without naming one.
+            if module == "os" and any(a.name == "*" or OS_PROCESS_CALLS.fullmatch(a.name)
+                                      for a in node.names):
+                return True
         if (isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name)
-                and node.value.id == "os" and OS_PROCESS_CALLS.fullmatch(node.attr)):
+                and node.value.id in ("os", "posix") and OS_PROCESS_CALLS.fullmatch(node.attr)):
             return True
     return False
 
@@ -250,7 +302,14 @@ def test_only_localts_runs_the_tailscale_binary():
     assert runners == {"localts.py", "doctor.py"}
     # The check itself sees each way in.
     for source in ("import subprocess", "from subprocess import run", "os.execv('x', [])",
-                   "from os import posix_spawn", "os.system('x')"):
+                   "from os import posix_spawn", "os.system('x')",
+                   "import pty\npty.spawn(['tailscale', 'status'])",
+                   "from pty import spawn", "import asyncio",
+                   "from asyncio import create_subprocess_exec", "import multiprocessing",
+                   "from concurrent.futures import ProcessPoolExecutor",
+                   "from concurrent import futures", "import posix\nposix.system('x')",
+                   "from os import *", "importlib.import_module('subprocess')",
+                   "from importlib import import_module", "__import__('subprocess')"):
         assert starts_programs(ast.parse(source)), source
     # doctor reaches subprocess in exactly one function, which refuses test posture and any
     # word naming tailscale at run time, and every call of it names an allowed program as a
