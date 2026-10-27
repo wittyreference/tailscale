@@ -188,3 +188,15 @@ def test_the_levers_name_permission_request_hooks_and_qualify_headless_runs():
     [standing] = [unit for unit in units if unit.startswith("- **Standing:**")]
     assert "unless a hook answers" in standing
     assert "allowManagedHooksOnly" in section("Disarm, revoke, uninstall")
+
+
+def test_the_deny_rules_are_claimed_only_for_what_names_the_path():
+    # A69: Read and Edit deny rules miss a command that reads files without naming them, such
+    # as `grep -r` over a parent [PERM L356], and a tool.check mod can approve a call a deny
+    # rule refuses [PERM L641]; MC's guide says both.
+    units = prose_units(section("The levers"))
+    [deny] = [unit for unit in units if unit.startswith("- **Deny rules.**")]
+    assert "name a path inside" in deny
+    assert any("`grep -r`" in unit and "`~/.config`" in unit for unit in units)
+    [mod] = [unit for unit in units if "`tool.check`" in unit]
+    assert "deny rules refuse" in mod

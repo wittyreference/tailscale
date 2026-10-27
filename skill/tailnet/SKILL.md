@@ -47,9 +47,10 @@ Each holds in every session, and each carries its reason.
   CLI is where the guard, the redactor and the audit log live.
 - **Secrets stay out of the transcript.** Never read, print, copy or paste a credential, the token
   cache or the protected file (all in `~/.config/tailnet/`), and never ask MC to paste a secret
-  into chat. Secrets enter only through `tailnet credentials set` in MC's own terminal. If MC
-  pastes one anyway, do not use it: tell them to revoke it (console → Trust credentials → Revoke)
-  and create a new one.
+  into chat. Never read recursively over `~`, `~/.config` or `~/.local` (`grep -r`, `rg`,
+  `find -exec`, `tar`): the deny rules miss a command that does not name the path. Secrets enter
+  only through `tailnet credentials set` in MC's own terminal. If MC pastes one anyway, do not
+  use it: tell them to revoke it (console → Trust credentials → Revoke) and create a new one.
 - **Permissions are MC's.** Never edit permission rules or hooks in any Claude Code settings file
   (`~/.claude/settings.json`, a project's `.claude/settings*.json`), the deny-ruled directories or
   the installed CLI. If `tailnet status` shows a missing gate rule, stop and tell MC; the
@@ -102,9 +103,11 @@ Each comes with the read-only command that checks it.
 
 - Holds: the ask rule `Bash(*tailnet*--apply*)` prompts MC for every `--apply` in every
   interactive mode, bypass and auto included; deny rules keep `~/.config/tailnet` from Claude's
-  tools in every mode; the write secret is a separate file; Tailscale's audit log records writes.
+  tools, and from commands that name it, in every mode; the write secret is a separate file;
+  Tailscale's audit log records writes.
 - Does not hold: command text the rule cannot see (a wrapper script), a script that opens the
-  secret itself, an installed mod that handles `tool.check`, or a `PermissionRequest` hook from
+  secret itself, a recursive read of a parent such as `grep -r ~/.config`, an installed mod that
+  handles `tool.check` (it can override deny rules too), or a `PermissionRequest` hook from
   any settings file or plugin, whose "allow" answers the prompt, `-p` included. The guard stops
   accidents, not a determined agent: one enforced surface, not the whole surface.
 - Postures: standing, or session-scoped. After a write session, offer

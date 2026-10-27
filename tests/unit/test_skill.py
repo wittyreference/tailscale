@@ -490,3 +490,21 @@ def test_the_pre_approved_policy_commands_say_what_they_will_not_write_or_send()
     assert "hidden paths" in lines["tailnet policy get"]
     assert "`.hujson` or `.json`" in lines["tailnet policy validate"]
     assert "Bash(tailnet policy *)" in frontmatter()["allowed-tools"]
+
+
+def test_the_skill_never_claims_deny_rules_stop_a_recursive_read():
+    # A69: `grep -r tskey- ~/.config` names no denied path and runs without a prompt, so the
+    # levers say so, and the agent is told never to read a parent of the secrets recursively.
+    text = skill_text()
+    start, end = section(text, "Levers, in five lines")
+    holds, fails = [item for item in bullets(text[start:end])
+                    if item.startswith(("Holds", "Does not hold"))]
+    assert "commands that name it" in holds
+    assert "`grep -r ~/.config`" in fails and "override deny rules" in fails
+    start, end = section(text, "Hard rules")
+    [secrets] = [rule for rule in bullets(text[start:end]) if "out of the transcript" in rule]
+    assert "Never read recursively" in secrets and "`grep -r`" in secrets
+    credentials = reference_text("credentials.md")
+    start, end = section(credentials, "7. Postures: standing or session-scoped")
+    assert "grep -r tskey- ~/.config" in credentials[start:end]
+    assert "a call a deny rule refuses" in credentials[start:end]

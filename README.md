@@ -42,7 +42,8 @@ What holds:
   hook or a prompt tool answers for you (below).
 - **The separate write secret.** The read client cannot write. With no write secret on disk,
   nothing on the droplet can write to your tailnet.
-- **Deny rules.** Claude's own tools cannot read or edit `~/.config/tailnet`, in any mode.
+- **Deny rules.** Claude's own tools, and Bash commands that name a path inside
+  `~/.config/tailnet`, cannot read or edit it, in any mode.
 - **The CLI's guard.** It refuses tag changes on this host and on your protected devices, a
   confirm from a stale plan, and every `--apply` while it cannot tell which device is this host.
   It stops accidents, not a determined agent.
@@ -54,8 +55,11 @@ What does not hold:
 
 - Command text the ask rule cannot see, such as a wrapper script.
 - A script that opens the secret file itself, past the deny rules.
+- A command that reads `~/.config` or your home recursively without naming `tailnet`, such as
+  `grep -r`: it prints the secret files, with no prompt.
 - An installed Claude Code mod that handles `tool.check`, when the machine has no managed settings
-  and no Team or Enterprise login: it can approve an `--apply` without asking you.
+  and no Team or Enterprise login: it can approve an `--apply` without asking you, and a read
+  the deny rules refuse.
 - A `PermissionRequest` hook that fires on Bash, in any settings file Claude Code loads or an
   enabled plugin: its "allow" answers the `--apply` prompt for you, `claude -p` included, as
   does a `-p` run's `--permission-prompt-tool`. Doctor checks your user settings only.

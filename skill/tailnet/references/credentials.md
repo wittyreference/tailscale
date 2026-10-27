@@ -223,10 +223,13 @@ per turn and say what it proves.
   (L9) checks MC's user settings only. `"allowManagedHooksOnly": true` in
   `/etc/claude-code/managed-settings.json` (root) blocks every user, project, local and plugin
   hook, MC's own included, so it is MC's call (DESIGN A67). Deny rules on `~/.config/tailnet`
-  hold in every mode [PM L30], but not against a script that opens files itself [PERM L356]. An
-  installed mod that handles `tool.check` can approve an ask-matched call without prompting when
-  the machine has no managed settings and the session has no Team or Enterprise login
-  [PERM L641-643]; that MC's setup is that case is [inference].
+  hold in every mode [PM L30], but not against a script that opens files itself, nor a command
+  that reads files without naming them, such as `grep -r tskey- ~/.config`, which matches no
+  deny rule and, as a built-in read-only command, runs without a prompt [PERM L356; L266 of the
+  2026-10-27 copy]. An installed mod that handles `tool.check` can approve an ask-matched call
+  without prompting, and a call a deny rule refuses, when the machine has no managed settings
+  and the session has no Team or Enterprise login [PERM L641-643]; that MC's setup is that case
+  is [inference].
   **One enforced surface, not the whole surface.**
 
 ## 8. The single-client fallback, and its cost

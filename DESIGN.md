@@ -1131,6 +1131,24 @@ tighter routes, an ask rule `Bash(*tailnet*--out*)` or `allowed-tools` naming th
 commands one by one without `validate`, would change what MC is prompted for, so they wait for
 MC's decision.
 
+**A69. (review, 2026-10-26) finding 30:** §2 L4 cites PERM L356 for its one failure, a script that
+opens files itself, and the README ("Claude's own tools cannot read or edit `~/.config/tailnet`, in
+any mode"), SKILL.md and `references/credentials.md` repeated it; the same line says Read and Edit
+deny rules also miss "a command that reads files without naming them, such as `grep -r pattern .`",
+and `grep`, a built-in read-only command, runs without a prompt in every mode unless
+`permissions.blockReadsOutsideWorkingDirectories` is set [PERM L266 of the 2026-10-27 copy], so
+`grep -r tskey- ~/.config` matches no deny rule (`Bash(*.config/tailnet*)` needs that text) and
+prints both secrets into the transcript; and README and credentials.md tied the `tool.check` mod
+of L3 (c) to `--apply` alone, though L4 already lists it, since it can approve a call a deny rule
+refuses [PERM L641]. L4's failure column gains the recursive read of a parent, and the README,
+SKILL.md and credentials.md now claim the deny rules only for Claude's file tools and commands
+that name a path inside the directory, list the recursive read and the mod's reach over deny rules
+among what does not hold, and SKILL.md's secrets rule tells the agent never to read `~`,
+`~/.config` or `~/.local` recursively; because those rules exist to keep the secrets out of the
+transcript (§20.4), and an agent told they hold in every mode would treat a broad grep as safe.
+Deny tripwires for recursive reads, `blockReadsOutsideWorkingDirectories` and the sandbox's
+`denyRead` (§23) would each change what MC is prompted for or allowed, so they wait for MC.
+
 ---
 
 ## 0. The design on one page
