@@ -1169,6 +1169,24 @@ the pasted command keep only a tag's own characters, as A54 does for names. [key
 https://tailscale.com/docs/features/access-control/key-expiry, last validated Jan 5, 2026,
 fetched 2026-10-27.
 
+**A71. (review, 2026-10-26) finding 32:** §2 L2's "Holds when" column ("No write secret on disk:
+nothing on the droplet can write to the tailnet"), §2's session-scoped posture and §28 MC8, and with
+them the README, `references/credentials.md` §7 and doctor's L9, said the session-scoped posture
+holds against a determined agent outright; the droplet's own `tailscale` CLI needs no API
+credential, and as root or tailscaled's operator `tailscale logout` will "Disconnect from Tailscale
+and expire the current log in" [cli L541-543], the same effect for this node as the API expire the
+CLI refuses as R4 (P9), while `tailscale set --hostname` renames it [cli L733], the hazard D8
+refuses. The claim is now scoped to the API: with no write secret nothing on the droplet can change
+other devices, keys or the policy through the API; the README lists the local CLI under what does
+not hold, credentials.md and L9 name `tailscale logout`, and SKILL.md's P9 rule names `tailscale
+logout`, `tailscale down` and `tailscale set --hostname` on the droplet as improvisations it must
+not make; because the route exists in both postures, so it changes neither's ranking, but "nothing
+can write" told MC the session-scoped posture closed it. Whether the agent's `mc` account has
+passwordless sudo is **[unverified]**. Ask rules such as `Bash(*tailscale logout*)` would change
+what MC is prompted for, so they wait for MC's decision. [cli] is
+https://tailscale.com/docs/reference/tailscale-cli, last validated Jul 30, 2026, fetched
+2026-10-27.
+
 ---
 
 ## 0. The design on one page

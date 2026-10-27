@@ -66,7 +66,8 @@ Each holds in every session, and each carries its reason.
 - **A headless `claude -p` run denies writes** unless a `PermissionRequest` hook or a prompt tool
   answers [PM L56]; never set one up: hand MC the apply line to run over SSH instead.
 - **Never take a lab host off the tailnet (P9).** The CLI has no delete, expire, deauthorize,
-  rename, re-address or key-expiry re-enable; never ask for one or improvise one.
+  rename, re-address or key-expiry re-enable; never ask for one or improvise one, such as
+  `tailscale logout`, `tailscale down` or `tailscale set --hostname` on the droplet.
 - **Policy: you draft and validate; MC applies it in the console.** Never convert `acls` to
   `grants` unprompted: the console's converter rewrites the whole section with no confirmation.
 - **From the droplet, address hosts by 100.x or nodeId, never MagicDNS:** it failed here at

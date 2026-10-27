@@ -200,3 +200,16 @@ def test_the_deny_rules_are_claimed_only_for_what_names_the_path():
     assert any("`grep -r`" in unit and "`~/.config`" in unit for unit in units)
     [mod] = [unit for unit in units if "`tool.check`" in unit]
     assert "deny rules refuse" in mod
+
+
+def test_the_session_scoped_posture_is_claimed_for_api_writes_only():
+    # A71: with no write secret nothing can write through the API, but root or tailscaled's
+    # operator can still log the droplet out or rename it with its own `tailscale` CLI, which
+    # needs no API credential [cli L541-543, L733].
+    units = prose_units(section("The levers"))
+    [secret] = [unit for unit in units if unit.startswith("- **The separate write secret.**")]
+    assert "through the API" in secret and "can write to your tailnet" not in secret
+    assert any("`tailscale logout`" in unit and "`tailscale set --hostname`" in unit
+               for unit in units)
+    [scoped] = [unit for unit in units if unit.startswith("- **Session-scoped:**")]
+    assert "through the API" in scoped

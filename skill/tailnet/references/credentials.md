@@ -207,7 +207,7 @@ per turn and say what it proves.
 | Posture | What it means | Holds against |
 |---|---|---|
 | **Standing** (the default) | `write.json` and `write.secret` stay in place | Accidents, in every interactive mode: the ask rule prompts for every `--apply`, bypass and auto included, unless a `PermissionRequest` hook answers that prompt (below) |
-| **Session-scoped** | Run `tailnet credentials forget write` after each write session; `credentials set write` again next time | A determined agent too: with no write secret on disk, nothing on the droplet can write to the tailnet |
+| **Session-scoped** | Run `tailnet credentials forget write` after each write session; `credentials set write` again next time | A determined agent too, for API writes: with no write secret on disk, nothing on the droplet can change other devices, keys or the policy through the API. Root or tailscaled's operator can still log this droplet out with `tailscale logout` or rename it with `tailscale set --hostname`, with no API credential [cli L541-543, L733] (DESIGN A71) |
 
 - Which posture MC wants is open question MC8. After a write session, offer
   `tailnet credentials forget write` **once**; never run it unprompted.
@@ -322,6 +322,7 @@ Read or fetched 2026-10-26.
 | TC | https://tailscale.com/docs/reference/trust-credentials | Jan 30, 2026 |
 | OC | https://tailscale.com/docs/features/oauth-clients | Jun 30, 2026 |
 | TAGS | https://tailscale.com/docs/features/tags | Dec 4, 2025 |
+| cli | https://tailscale.com/docs/reference/tailscale-cli (fetched 2026-10-27) | Jul 30, 2026 |
 | AUDIT | https://tailscale.com/docs/features/logging/audit-logging | Jan 5, 2026 |
 | KP | https://tailscale.com/docs/reference/key-prefixes | Aug 1, 2025 |
 | KSM | https://tailscale.com/docs/reference/key-secret-management | Jan 5, 2026 |

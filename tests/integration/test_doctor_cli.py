@@ -541,3 +541,11 @@ def test_doctor_names_a_permission_request_hook_that_can_answer_the_gate_prompt(
     assert '"Bash"' in found["finding"] and "answer the --apply prompt" in found["finding"]
     # A lever that does not hold is a finding to report, never a doctor failure.
     assert result.returncode == 0, result.stdout
+
+
+def test_doctor_claims_no_write_secret_stops_api_writes_not_the_local_cli(cli, tailnet, ready):
+    # A71: L2 holds for the API only; root or tailscaled's operator can still log this host
+    # out with its own `tailscale` CLI, which needs no API credential [cli L541-543].
+    finding = checks_of(envelope(cli("--json", "doctor")))["L9"]["finding"]
+    assert "L2 holds" in finding and "through the API" in finding
+    assert "tailscale logout" in finding

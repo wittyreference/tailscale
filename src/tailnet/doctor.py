@@ -1032,8 +1032,11 @@ class _Run:
             standing = ("a write secret may be on disk in a temp copy an interrupted `credentials "
                         "set write` left (L4), so L2 does not hold until it is removed")
         else:
-            standing = ("no write secret on disk: nothing on this host can write to the tailnet "
-                        "(L2 holds)")
+            # L2 covers the API only: root or tailscaled's operator can still log this host
+            # out with its own CLI, which needs no API credential (A71).
+            standing = ("no write secret on disk: nothing on this host can change other "
+                        "devices, keys or the policy through the API (L2 holds); root or "
+                        "tailscaled's operator can still run `tailscale logout` here [cli L541]")
         notes = [
             ("ask rules prompt in every interactive mode, bypassPermissions and auto included; "
              "headless `claude -p` runs deny writes unless a PermissionRequest hook, "

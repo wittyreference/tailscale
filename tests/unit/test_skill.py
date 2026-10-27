@@ -517,3 +517,18 @@ def test_the_key_expired_row_keeps_a_tagged_host_s_tags():
     [row] = [line for line in text.splitlines() if line.startswith("| `KEY_EXPIRED` |")]
     for words in ("Temporarily extend key", "30 minutes", "--advertise-tags=", "drops its tags"):
         assert words in row, words
+
+
+def test_p9_names_the_local_cli_commands_that_take_the_droplet_off():
+    # A71: the droplet's own `tailscale` CLI can log it out or rename it with no API credential,
+    # so the P9 rule names those improvisations, and the posture's claim is scoped to the API.
+    text = skill_text()
+    start, end = section(text, "Hard rules")
+    [p9] = [rule for rule in bullets(text[start:end]) if "(P9)" in rule]
+    for command in ("`tailscale logout`", "`tailscale down`", "`tailscale set --hostname`"):
+        assert command in p9, command
+    credentials = reference_text("credentials.md")
+    start, end = section(credentials, "7. Postures: standing or session-scoped")
+    [row] = [line for line in credentials[start:end].splitlines()
+             if line.startswith("| **Session-scoped**")]
+    assert "through the API" in row and "`tailscale logout`" in row
