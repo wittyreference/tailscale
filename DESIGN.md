@@ -1077,6 +1077,18 @@ written, the bytes encoded before any backup is taken as a second line; because 
 only list of what the installer added (A39), and the abort keeps §20.4 step 1's rule of never
 guessing at a repair, where re-escaping the file would rewrite MC's other entries.
 
+**A66. (review, 2026-10-26) finding 27, recorded, not changed:** §20.4 and A38 (1) give the two
+settings rules their absolute form whenever `CLAUDE_CONFIG_DIR` is set, so that a rule naming
+`~/.claude/settings.json` does not guard a file Claude Code does not read. For the `Edit` form
+nothing is lost, since path rules resolve paths. The `Bash` form is matched against the command
+text, with no `~` or `$HOME` expansion, so with `CLAUDE_CONFIG_DIR` set, even to `$HOME/.claude`,
+`Bash(*<abs>/settings.json*)` misses a command spelling the same file `~/.claude/settings.json`,
+`$HOME/.claude/settings.json` or `$CLAUDE_CONFIG_DIR/settings.json`, which the default form's
+`Bash(*.claude/settings.json*)` would catch in the first two cases. This text tripwire is
+narrower there than §20.4 implies; the gate rule and the guard's refusal when it is missing are
+untouched. Writing the default and a basename form beside the absolute one would change what MC
+is prompted for, so it waits for MC's decision.
+
 ---
 
 ## 0. The design on one page
