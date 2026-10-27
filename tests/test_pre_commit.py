@@ -166,6 +166,20 @@ def test_every_other_documented_key_kind_is_refused(tmp_path, kind):
     assert_never_echoed(result, secret)
 
 
+@pytest.mark.parametrize("encoding", ["utf-16", "utf-16-le", "utf-16-be"])
+def test_a_key_in_a_utf_16_file_is_refused(tmp_path, encoding):
+    # A file saved as UTF-16 (a Windows redirect, say) puts a NUL beside every character, so
+    # the key's bytes never sit together; the scan reads the line without them (A73).
+    secret = key("client")
+    env = make_repo(tmp_path, PERSONAL)
+    (tmp_path / "u16.txt").write_bytes(f"first\n{secret}\n".encode(encoding))
+    subprocess.run(["git", "-C", str(tmp_path), "add", "--", "u16.txt"], check=True, env=env)
+    result = hook(tmp_path, env)
+    assert result.returncode == 1
+    assert "u16.txt:2" in result.stderr
+    assert_never_echoed(result, secret)
+
+
 def test_a_prefix_without_a_key_is_allowed(tmp_path):
     prose = ("Client secrets begin tskey-client- and API tokens tskey-api-…; "
              "`tskey-auth-` keys are out of scope.\n")

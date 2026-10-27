@@ -63,7 +63,10 @@ done
 #
 # The match is never printed, only file:line, because this output lands in transcripts.
 # The diff flags pin the format against local config: no colour, no external or
-# textconv drivers, binary files scanned as text, and fixed a/ b/ prefixes.
+# textconv drivers, binary files scanned as text, and fixed a/ b/ prefixes. NUL bytes are
+# dropped before the scan: a UTF-16 file puts one beside every character, which would keep
+# a key's bytes apart, and some awks end a string at the first one (A73). Line numbers are
+# unchanged, because git counts lines by their newline bytes.
 scan='
 /^diff / { in_header = 1; next }
 in_header && /^\+\+\+ / { file = substr($0, 5); sub(/^b\//, "", file); next }
@@ -86,7 +89,7 @@ in_header && /^\+\+\+ / { file = substr($0, 5); sub(/^b\//, "", file); next }
 '
 
 if ! findings="$(git diff --cached -U0 --no-color --no-ext-diff --no-textconv --text \
-        --src-prefix=a/ --dst-prefix=b/ | awk "$scan")"; then
+        --src-prefix=a/ --dst-prefix=b/ | tr -d '\000' | awk "$scan")"; then
     echo "tailscale: refusing to commit: could not read the staged diff to scan it for secrets." >&2
     exit 1
 fi

@@ -1202,6 +1202,20 @@ out, and an agent that believed the allow-list would trust a check that was neve
 mc8805 instead would refuse MC's other personal identities in every session that commits here, so
 it waits for MC's decision.
 
+**A73. (review, 2026-10-26) finding 12:** §21.6 and A5 scan every added line for a key, and the
+hook's comment says binary files are scanned as text, but a file saved as UTF-16 (LE or BE, with
+or without a BOM) puts a NUL beside every character, so `tskey-` never appeared as one run of bytes
+and a long-lived `tskey-client-` secret in such a file was committed without complaint. The staged
+diff now passes through `tr -d '\000'` before the scan, so a UTF-16 line reads like ASCII; line
+numbers are unchanged, since git counts lines by newline bytes; because the hook exists to keep any
+key out of history, whatever the encoding an editor or a Windows redirect chose, and stripping the
+NULs before awk sees them works with every awk, where some end a string at the first NUL. The
+finding's other half, refusing a bare `tskey-<alnum>` with no kind word, is not adopted: the key
+prefix pages give every Tailscale key a kind after `tskey-` [KP L5, L13; KSM L19], the OAuth page
+calls its minted token an API access token [OC L18-20], its `tskey-0123…` example is a sequential
+placeholder already marked **[unverified]** (`docs/research/api-surface.md`), and that rule would
+refuse that research file; e2e may settle the prefix by recording a minted token's prefix alone.
+
 ---
 
 ## 0. The design on one page
