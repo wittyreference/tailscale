@@ -1062,6 +1062,21 @@ Claude Code cannot read, which means a parser at least as strict as Claude Code'
 must never vouch for rules Claude Code will not apply. 1e400 itself Claude Code reads (as
 Infinity, which its schema may refuse); refusing it errs toward a refused `--apply`.
 
+**A65. (review, 2026-10-26) finding 26:** A38 (2) runs every step even when one stops, and §20.4
+step 5 records the added rules, but a step stopped only on a fixed list of exceptions, and the
+record step came last; a login profile printing one byte that is not UTF-8 raised
+`UnicodeDecodeError` in the PATH check, and half a surrogate pair escaped as JSON (`"\ud83d"`,
+which Claude Code reads) raised `UnicodeEncodeError` in the settings write after the backup, so
+the run ended in a traceback before the record, and rules the settings step had added were never
+recorded and no uninstall could take them out. Now (1) any other `Exception` a step raises stops
+that step as `STOPPED: <type>: <message>`; (2) the record step runs in a `finally`, so an
+interrupt (Ctrl-C) after the settings step still leaves the rules recorded; (3) the output of git,
+`claude` and the login shell is decoded with replacement characters; and (4) a settings document
+that cannot be encoded as UTF-8 aborts the settings step at the read, as Unmergeable, with nothing
+written, the bytes encoded before any backup is taken as a second line; because the record is the
+only list of what the installer added (A39), and the abort keeps §20.4 step 1's rule of never
+guessing at a repair, where re-escaping the file would rewrite MC's other entries.
+
 ---
 
 ## 0. The design on one page

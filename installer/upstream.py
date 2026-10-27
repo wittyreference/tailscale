@@ -57,9 +57,11 @@ def git(args, environ, *, timeout=LOCAL_TIMEOUT):
     if program is None:
         raise UpstreamError("git is not on PATH")
     try:
+        # A path or message that is not UTF-8 is shown with replacement characters rather
+        # than ending the run.
         done = subprocess.run([program, *[str(a) for a in args]], env=git_environment(environ),
-                              stdin=subprocess.DEVNULL, capture_output=True, text=True,
-                              timeout=timeout, check=False)
+                              stdin=subprocess.DEVNULL, capture_output=True, encoding="utf-8",
+                              errors="replace", timeout=timeout, check=False)
     except subprocess.TimeoutExpired:
         raise UpstreamError(f"`git {' '.join(map(str, args))}` gave no answer within "
                             f"{timeout} s") from None

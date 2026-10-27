@@ -165,6 +165,13 @@ def load(path):
         _check_shape(settings)
     except Unmergeable as exc:
         raise Unmergeable(f"{path}: {exc}") from None
+    try:
+        dump(settings).encode("utf-8")
+    except ValueError:
+        # JSON can escape half of a surrogate pair, and Claude Code reads it, but no UTF-8
+        # file can hold one, so the document could never be written back.
+        raise Unmergeable(f"{path} holds half of a surrogate pair (a \\ud800-\\udfff escape "
+                          "alone), which no UTF-8 file can hold") from None
     return Current(settings, raw, mode)
 
 
@@ -276,6 +283,8 @@ def _commit(path, current, new, now):
     carry environment values. A file that did not exist has nothing to back up and is
     created 0600; an existing one keeps its mode.
     """
+    # Encoded first, so a document that cannot be written leaves no backup behind either.
+    data = dump(new).encode("utf-8")
     backup = None
     if current.raw is not None:
         backup = backup_path(path, now)
@@ -283,7 +292,7 @@ def _commit(path, current, new, now):
     else:
         path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     mode = current.mode if current.mode is not None else 0o600
-    replace_checked(path, dump(new).encode("utf-8"), mode, current.raw)
+    replace_checked(path, data, mode, current.raw)
     return backup
 
 
@@ -322,7 +331,7 @@ def merge_file(path, rules, *, now, dry_run=False):
                        diff=change, warnings=found)
     try:
         backup = _commit(path, current, new, now)
-    except (Unmergeable, errors.LocalError, OSError) as exc:
+    except (ValueError, errors.LocalError, OSError) as exc:
         return Outcome("aborted", f"{_why(exc)}; {by_hand(rules)}", warnings=found)
     saved = f" (backup {backup})" if backup else ""
     return Outcome("changed", f"added {_count(added)} rules to {path}{saved}", added=added,
@@ -355,7 +364,7 @@ def remove_file(path, recorded, *, now, dry_run=False):
                        removed=removed, not_found=not_found, diff=change)
     try:
         backup = _commit(path, current, new, now)
-    except (Unmergeable, errors.LocalError, OSError) as exc:
+    except (ValueError, errors.LocalError, OSError) as exc:
         return Outcome("aborted", f"{_why(exc)}; {by_hand(recorded, removing=True)}",
                        not_found=not_found)
     return Outcome("changed", f"removed {_count(removed)} rules from {path} (backup {backup})"

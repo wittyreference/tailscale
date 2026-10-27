@@ -123,6 +123,19 @@ def test_a_number_claude_code_cannot_read_back_aborts_without_writing(tmp_path, 
         settings_merge.dump({"x": float("inf")})
 
 
+def test_half_a_surrogate_pair_aborts_both_steps_before_any_backup(tmp_path):
+    # JSON can escape half of a surrogate pair and Claude Code reads it, but no UTF-8 file
+    # can hold it, so the document could not be written back after the backup was taken.
+    path = tmp_path / "settings.json"
+    raw = b'{"NOTE": "\\ud83d", "permissions": {"ask": ["Bash(*tailnet*--apply*)"]}}'
+    path.write_bytes(raw)
+    for outcome in (settings_merge.merge_file(path, RULES, now=NOW),
+                    settings_merge.remove_file(path, RULES, now=NOW)):
+        assert outcome.status == "aborted" and "surrogate" in outcome.message
+    assert path.read_bytes() == raw
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["settings.json"]
+
+
 @pytest.mark.parametrize("doc, why", [
     ({"permissions": []}, "`permissions` is not an object"),
     ({"permissions": "ask"}, "`permissions` is not an object"),

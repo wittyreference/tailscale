@@ -449,6 +449,59 @@ def test_a_checkout_git_cannot_answer_for_copies_nothing(box, tmp_path):
     assert not os.path.lexists(box.target.lib) and not os.path.lexists(box.target.skill)
 
 
+def recorded_rules(box):
+    """The rules the install record lists for the box's settings file."""
+    rules = json.loads(box.target.record.read_text())["added"]["rules"]
+    return rules.get(str(box.target.settings))
+
+
+def test_a_login_profile_printing_bytes_that_are_not_utf8_still_leaves_the_rules_recorded(box):
+    # The PATH check reads what MC's login shell prints; one byte that is not UTF-8 crashed
+    # the run after the settings step had added the rules and before the record listed
+    # them, so no uninstall could ever take them out again.
+    (box.home / ".bash_profile").write_bytes(b"printf '\\374\\n'\nprintf '\\375' >&2\n")
+    code, out = run_installer(box)
+    assert code == 0, out
+    assert "path: warning: the login PATH finds" in out
+    assert recorded_rules(box) == box.target.rules()
+
+
+def test_a_lone_surrogate_in_settings_stops_the_settings_step_with_nothing_written(box):
+    # JSON can escape half of a surrogate pair, and Claude Code reads it, but no UTF-8 file
+    # can hold it: the write failed after the backup, and the error escaped every step.
+    box.claude.mkdir(mode=0o700)
+    raw = b'{"NOTE": "\\ud83d"}'
+    box.target.settings.write_bytes(raw)
+    code, out = run_installer(box)
+    assert code == 1, out
+    assert "settings: STOPPED" in out and "Add these rules to the settings file by hand" in out
+    assert box.target.settings.read_bytes() == raw
+    assert sorted(p.name for p in box.claude.iterdir()) == ["settings.json", "skills"]
+    # The other steps ran and the record was written, listing no rule.
+    assert recorded_rules(box) is None and box.target.lib.is_dir()
+
+
+def test_an_unexpected_error_in_a_step_stops_that_step_and_the_rest_still_run(box, checkout):
+    # A SHA256SUMS line with a third field is no form the spec step anticipates; whatever a
+    # step raises, the run says STOPPED and still writes the record of what it added.
+    sums = checkout / "spec" / "SHA256SUMS"
+    sums.write_text(sums.read_text().rstrip("\n") + " extra\n")
+    code, out = run_from(box, checkout)
+    assert code == 1, out
+    assert "spec: STOPPED: ValueError:" in out
+    assert "Traceback" not in out
+    assert recorded_rules(box) == box.target.rules()
+
+
+def test_an_interrupt_after_the_settings_step_still_leaves_the_rules_recorded(box):
+    # Ctrl-C while the login shell answers the PATH check: the run ends, but not before the
+    # record lists the rules the settings step had added.
+    (box.home / ".bash_profile").write_text("kill -INT $PPID\nexit 0\n")
+    with pytest.raises(KeyboardInterrupt):
+        run_installer(box)
+    assert recorded_rules(box) == box.target.rules()
+
+
 def test_a_foreign_tailscale_skill_is_left_alone(box, upstream_repo):
     canonical = box.home / ".agents" / "skills" / "tailscale"
     canonical.mkdir(parents=True)

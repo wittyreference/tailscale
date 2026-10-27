@@ -487,7 +487,13 @@ class Installer:
         if self.options.uninstall:
             return self.run_uninstall()
         self.commit, self.dirty = self.source_state()
-        self.run_steps(self.steps())
+        *steps, record = self.steps()
+        try:
+            self.run_steps(steps)
+        finally:
+            # An interrupt (Ctrl-C) still ends the run, but only once the record lists what
+            # was added: rules it does not list, no uninstall can ever take out.
+            self.run_steps([record])
         self.finish()
         return 1 if self.stopped else 0
 
@@ -500,6 +506,10 @@ class Installer:
             except (OSError, StepError, upstream.UpstreamError, errors.TailnetError,
                     secure_files.Unreadable, settings_merge.Unmergeable) as exc:
                 self.stop(_reason(exc))
+            except Exception as exc:  # noqa: BLE001
+                # Whatever else a step raises stops that step alone: the record step still
+                # runs, as every step does when one stops (A38 (2)).
+                self.stop(f"{type(exc).__name__}: {exc}")
             if not self.reported:
                 self.same()
 
@@ -765,7 +775,8 @@ class Installer:
         """Run Claude Code's CLI with `argv`'s arguments; return (exit status, stdout)."""
         try:
             done = subprocess.run([program, *argv[1:]], env=self.environ,
-                                  stdin=subprocess.DEVNULL, capture_output=True, text=True,
+                                  stdin=subprocess.DEVNULL, capture_output=True,
+                                  encoding="utf-8", errors="replace",
                                   timeout=PROGRAM_TIMEOUT, check=False)
         except subprocess.TimeoutExpired:
             raise StepError(f"`{' '.join(argv)}` gave no answer within {PROGRAM_TIMEOUT} s") \
@@ -809,8 +820,10 @@ class Installer:
             self.tell("not checked: bash is not on PATH")
             return
         try:
+            # A login profile may print anything; bytes that are not UTF-8 must not end the run.
             done = subprocess.run([bash, "-lc", "command -v tailnet"], env=self.environ,
-                                  stdin=subprocess.DEVNULL, capture_output=True, text=True,
+                                  stdin=subprocess.DEVNULL, capture_output=True,
+                                  encoding="utf-8", errors="replace",
                                   timeout=PROGRAM_TIMEOUT, check=False)
         except subprocess.TimeoutExpired:
             self.tell(f"not checked: a login shell gave no answer within {PROGRAM_TIMEOUT} s")
