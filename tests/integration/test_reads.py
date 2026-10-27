@@ -407,8 +407,11 @@ def test_an_unsafe_protected_file_is_reported_and_the_list_still_answers(cli, lo
 
 def test_test_posture_never_runs_tailscale(cli, loopback, configured):
     # Every command that finds self, or reads the local view, runs here in test posture. The
-    # CLI process runs under netguard, which crashes it on any attempt to start tailscale,
-    # so a clean exit is the proof.
+    # CLI process runs under netguard, which raises on any attempt to start tailscale, and
+    # localts raises NotInTestPosture before one gets that far. Either crashes `device list`
+    # and `dns`, so for them a clean exit is the proof. `status` turns any section's exception
+    # into that section's error and still exits 0 (A24), so for it the proof is that no output
+    # names either refusal and that self_local says it was never run.
     write_protected(configured, PROTECTED)
     serve_devices(loopback)
     serve_dns(loopback)
@@ -416,7 +419,11 @@ def test_test_posture_never_runs_tailscale(cli, loopback, configured):
                  ["status"], ["status", "--brief"], ["--json", "status"]):
         result = cli(*args)
         assert result.returncode == 0, result.stderr
-        assert "netguard" not in result.stderr
+        for refusal in ("netguard", "NetguardViolation", "NotInTestPosture"):
+            assert refusal not in result.stdout + result.stderr, (args, refusal)
+    assert envelope(result)["data"]["self_local"] == {
+        "run": False, "hostname": None, "ips": [], "backend_state": None, "online": None,
+        "reason": "not run (test posture)", "error": None}
 
 
 DNS = API + "/tailnet/-/dns/"

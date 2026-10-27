@@ -90,7 +90,10 @@ def test_status_reports_every_section_without_the_api_or_a_secret(posture, loopb
                                  "entries": 2, "error": None}
     assert data["gate"]["present"] is True and data["gate"]["missing"] == []
     assert data["gate"]["total"] == 10
-    assert data["self_local"]["run"] is False
+    # Not run because of the posture, and not tried and failed: status would turn a refused
+    # run into this section's error and still exit 0.
+    local = data["self_local"]
+    assert (local["run"], local["reason"], local["error"]) == (False, "not run (test posture)", None)
     assert data["last_doctor"]["ran"] is True
     assert data["last_doctor"]["counts"]["warn"] == 2
     assert data["open_questions"] == ["protected-list", "fleet-key-expiry"]
