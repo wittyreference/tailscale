@@ -70,3 +70,9 @@ This is one enforced surface, not the whole surface — say so wherever it matte
   so in the current session.
 - Where something needs MC's hands (console, a TTY, a browser), say what it proves and hand them
   one command.
+
+## Corrections
+
+- 2026-10-28: Don't assume MC is on their phone when handing over a step; MC may be at a terminal
+  (albini). Ask or check where they are, and at a terminal give a pasteable command, not phone
+  workarounds.
